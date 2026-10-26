@@ -1,0 +1,131 @@
+# ==============================================================================
+# Quizora Root .gitignore
+# Complete Git exclusion rules for Frontend (React/Vite), Backend (Spring Boot),
+# Local Database (MySQL), and Development Environments.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Local Database Storage & Backups (CRITICAL)
+# ------------------------------------------------------------------------------
+# Exclude raw local MySQL 8.0 engine datadir, binlogs, and InnoDB binary tablespaces
+mysql_data/
+
+# Exclude local database backups, dumps, and binary SQLite/DB files containing live data
+*.dump
+*.db
+*.sqlite
+*.sqlite3
+*.sql.gz
+*.sql.tar.gz
+*.sql.bak
+
+# ------------------------------------------------------------------------------
+# 2. Environment Variables, Secrets & Certificates
+# ------------------------------------------------------------------------------
+# Ignore all real environment files and local overrides
+.env
+.env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Allow public example/template configuration files
+!.env.example
+
+# Exclude cryptographic keys, certificates, and Java keystores
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+
+# ------------------------------------------------------------------------------
+# 3. Node.js & React/Vite Frontend
+# ------------------------------------------------------------------------------
+# Package dependencies
+node_modules/
+.pnpm-store/
+.npm/
+
+# Vite production build output
+dist/
+dist-ssr/
+build/
+.vite/
+
+# Frontend linter & local caches
+.eslintcache
+.stylelintcache
+*.local
+
+# ------------------------------------------------------------------------------
+# 4. Java & Maven / Spring Boot Backend
+# ------------------------------------------------------------------------------
+# Maven compiled classes and packaged jars/wars
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+
+# JVM crash logs and replay data
+hs_err_pid*
+replay_pid*
+
+# Maven wrapper jar if generated locally
+.mvn/wrapper/maven-wrapper.jar
+
+# ------------------------------------------------------------------------------
+# 5. Logs & Temporary Debug Outputs
+# ------------------------------------------------------------------------------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Scratch & temporary development scripts
+scratch/
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# ------------------------------------------------------------------------------
+# 6. IDE, Code Editors & OS Metadata
+# ------------------------------------------------------------------------------
+# JetBrains (IntelliJ IDEA, WebStorm)
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Visual Studio Code
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Visual Studio / Windows
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes

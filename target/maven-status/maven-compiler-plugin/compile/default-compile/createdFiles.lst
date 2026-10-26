@@ -1,4 +1,5 @@
 com\quizlive\dto\WsMessage.class
+com\quizlive\controller\HealthController.class
 com\quizlive\repository\QuestionRepository.class
 com\quizlive\dto\CandidateQuestionDto.class
 com\quizlive\repository\ParticipantRepository.class
@@ -30,6 +31,7 @@ com\quizlive\dto\QuestionDto.class
 com\quizlive\dto\QuizDto.class
 com\quizlive\service\AuthService$FacultySession.class
 com\quizlive\service\AuthService.class
+com\quizlive\config\GlobalExceptionHandler.class
 com\quizlive\repository\QuizRepository.class
 com\quizlive\dto\CandidateOptionDto.class
 com\quizlive\dto\SessionStateResponse.class

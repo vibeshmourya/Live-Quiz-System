@@ -2,6 +2,9 @@
 
 Quizora is a real-time MCQ quiz and confidential college examination platform where faculty can conduct live quizzes and candidates join instantly using a QR code or shareable PIN link on their phones. Candidates answer questions in real time while the host monitors live response distributions through dynamically updating charts.
 
+- **Live Production URL**: [https://live-quiz-system.vercel.app/](https://live-quiz-system.vercel.app/)
+- **GitHub Repository**: [https://github.com/vibeshmourya/Live-Quiz-System](https://github.com/vibeshmourya/Live-Quiz-System)
+
 ---
 
 ## 🛠 Technology Stack

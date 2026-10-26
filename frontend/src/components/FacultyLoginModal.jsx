@@ -48,8 +48,9 @@ export default function FacultyLoginModal({ onSuccess, onCancel }) {
       setError('Please enter your full name.');
       return;
     }
-    if (!regEmail.trim() || !regEmail.includes('@')) {
-      setError('Please enter a valid email address.');
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!regEmail.trim() || !emailRegex.test(regEmail.trim())) {
+      setError('Please enter a valid email address (e.g. faculty@university.edu).');
       return;
     }
     if (!regPassword || regPassword.length < 6) {

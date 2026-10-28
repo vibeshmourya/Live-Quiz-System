@@ -336,6 +336,23 @@ export async function deleteQuiz(id) {
   return res.json();
 }
 
+export async function duplicateQuiz(id) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/quizzes/${id}/duplicate`, {
+      method: 'POST',
+      headers: getHeaders(false),
+    });
+  } catch (err) {
+    throw handleNetworkError(err, 'duplicating examination');
+  }
+  if (!res.ok) {
+    const errMsg = await parseErrorResponse(res, 'Failed to duplicate examination');
+    throw new Error(errMsg);
+  }
+  return res.json();
+}
+
 export async function createSession(quizId) {
   let res;
   try {
@@ -397,6 +414,40 @@ export async function getCandidateState(pin, candidateId) {
   }
   if (!res.ok) {
     const errMsg = await parseErrorResponse(res, 'Failed to fetch candidate state');
+    throw new Error(errMsg);
+  }
+  return res.json();
+}
+
+export async function getSessionParticipants(pin) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/sessions/${pin}/participants`, {
+      headers: getHeaders(false),
+    });
+  } catch (err) {
+    throw handleNetworkError(err, 'fetching participants');
+  }
+  if (!res.ok) {
+    const errMsg = await parseErrorResponse(res, 'Failed to fetch participants');
+    throw new Error(errMsg);
+  }
+  return res.json();
+}
+
+export async function acknowledgeRules(pin, candidateId) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/sessions/${pin}/acknowledge-rules`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidateId }),
+    });
+  } catch (err) {
+    throw handleNetworkError(err, 'acknowledging examination rules');
+  }
+  if (!res.ok) {
+    const errMsg = await parseErrorResponse(res, 'Failed to acknowledge examination rules');
     throw new Error(errMsg);
   }
   return res.json();
@@ -488,3 +539,137 @@ export async function endQuiz(pin) {
   }
   return res.json();
 }
+
+export async function reportIncident(pin, { candidateId, eventType, incidentDetails }) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/sessions/${pin}/incidents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidateId, eventType, incidentDetails }),
+    });
+  } catch (err) {
+    console.warn('Incident report network failure (ignored to prevent disruption):', err);
+    return null;
+  }
+  if (!res.ok) {
+    return null;
+  }
+  return res.json();
+}
+
+export async function getSessionIncidents(pin) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/sessions/${pin}/incidents`, {
+      method: 'GET',
+      headers: getHeaders(false),
+    });
+  } catch (err) {
+    throw handleNetworkError(err, 'fetching incidents');
+  }
+  if (!res.ok) {
+    const errMsg = await parseErrorResponse(res, 'Failed to fetch incidents');
+    throw new Error(errMsg);
+  }
+  return res.json();
+}
+
+export async function getIncidentSummary(pin) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/sessions/${pin}/incidents/summary`, {
+      method: 'GET',
+      headers: getHeaders(false),
+    });
+  } catch (err) {
+    throw handleNetworkError(err, 'fetching incident summary');
+  }
+  if (!res.ok) {
+    const errMsg = await parseErrorResponse(res, 'Failed to fetch incident summary');
+    throw new Error(errMsg);
+  }
+  return res.json();
+}
+
+export async function reviewIncident(pin, incidentId, { reviewStatus, reviewNotes }) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/sessions/${pin}/incidents/${incidentId}/review`, {
+      method: 'PATCH',
+      headers: getHeaders(),
+      body: JSON.stringify({ reviewStatus, reviewNotes }),
+    });
+  } catch (err) {
+    throw handleNetworkError(err, 'reviewing incident');
+  }
+  if (!res.ok) {
+    const errMsg = await parseErrorResponse(res, 'Failed to review incident');
+    throw new Error(errMsg);
+  }
+  return res.json();
+}
+
+export async function updateResultPublication(quizId, resultsPublished) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/quizzes/${quizId}/publication`, {
+      method: 'PATCH',
+      headers: getHeaders(),
+      body: JSON.stringify({ resultsPublished }),
+    });
+  } catch (err) {
+    throw handleNetworkError(err, 'updating result publication');
+  }
+  if (!res.ok) {
+    const errMsg = await parseErrorResponse(res, 'Failed to update publication status');
+    throw new Error(errMsg);
+  }
+  return res.json();
+}
+
+async function downloadReportBlob(url, filename) {
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'GET',
+      headers: getHeaders(false),
+    });
+  } catch (err) {
+    throw handleNetworkError(err, 'downloading report');
+  }
+  if (!res.ok) {
+    const errMsg = await parseErrorResponse(res, 'Failed to download report');
+    throw new Error(errMsg);
+  }
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('text/html')) {
+    throw new Error('API server returned an HTML error response instead of the requested report file.');
+  }
+  const blob = await res.blob();
+  const downloadUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(downloadUrl);
+  a.remove();
+}
+
+export async function downloadExamPdf(pin) {
+  return downloadReportBlob(`${API_BASE}/reports/exam/${pin}/pdf`, `quizora-exam-${pin}-results.pdf`);
+}
+
+export async function downloadExamCsv(pin) {
+  return downloadReportBlob(`${API_BASE}/reports/exam/${pin}/csv`, `quizora-exam-${pin}-results.csv`);
+}
+
+export async function downloadStudentPdf(pin, candidateId) {
+  return downloadReportBlob(`${API_BASE}/reports/exam/${pin}/student/${candidateId}/pdf`, `quizora-student-${candidateId}-report.pdf`);
+}
+
+export async function downloadIncidentPdf(pin) {
+  return downloadReportBlob(`${API_BASE}/reports/exam/${pin}/incidents/pdf`, `quizora-exam-${pin}-incidents.pdf`);
+}
+

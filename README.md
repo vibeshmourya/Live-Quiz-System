@@ -97,6 +97,30 @@ CREATE DATABASE IF NOT EXISTS quizlive;
 ```sql
 ALTER TABLE faculty_users ADD COLUMN email VARCHAR(150) NULL UNIQUE;
 ALTER TABLE quizzes ADD COLUMN answer_change_policy VARCHAR(30) NOT NULL DEFAULT 'SINGLE_SELECTION';
+ALTER TABLE quizzes ADD COLUMN require_fullscreen BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE quizzes ADD COLUMN monitor_tab_switch BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE quizzes ADD COLUMN restrict_copy_paste BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE quizzes ADD COLUMN warning_threshold INT NOT NULL DEFAULT 3;
+ALTER TABLE quizzes ADD COLUMN shuffle_questions BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE quizzes ADD COLUMN shuffle_options BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE quizzes ADD COLUMN auto_submit_at_deadline BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE quizzes ADD COLUMN results_published BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE quizzes ADD COLUMN show_correct_answers BOOLEAN NOT NULL DEFAULT TRUE;
+
+CREATE TABLE IF NOT EXISTS exam_incidents (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  live_session_id BIGINT NOT NULL,
+  participant_id BIGINT NOT NULL,
+  event_type VARCHAR(50) NOT NULL,
+  incident_details VARCHAR(500) NULL,
+  server_timestamp DATETIME NOT NULL,
+  review_status VARCHAR(30) NOT NULL DEFAULT 'PENDING',
+  review_notes VARCHAR(500) NULL,
+  CONSTRAINT fk_incident_session FOREIGN KEY (live_session_id) REFERENCES live_sessions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_incident_participant FOREIGN KEY (participant_id) REFERENCES participants(id) ON DELETE CASCADE,
+  INDEX idx_session_participant (live_session_id, participant_id),
+  INDEX idx_session_timestamp (live_session_id, server_timestamp)
+);
 ```
 
 ### 2. Start Backend (Spring Boot)
@@ -115,3 +139,4 @@ npm install
 npm run dev
 ```
 The application opens at `http://localhost:5173`.
+

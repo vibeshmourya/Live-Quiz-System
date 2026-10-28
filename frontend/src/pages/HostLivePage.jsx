@@ -14,6 +14,9 @@ import {
   revealAnswer,
   nextQuestion,
   endQuiz,
+  getSessionIncidents,
+  reviewIncident,
+  getSessionParticipants,
 } from '../services/api';
 import { connectSessionWebSocket } from '../services/websocket';
 
@@ -23,8 +26,14 @@ export default function HostLivePage({ pin, onEndQuiz, onNavigate }) {
   const [state, setState] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [actionMessage, setActionMessage] = useState('');
   const [timerRemaining, setTimerRemaining] = useState(0);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [incidents, setIncidents] = useState([]);
+  const [showIncidentsModal, setShowIncidentsModal] = useState(false);
+  const [loadingIncidents, setLoadingIncidents] = useState(false);
+  const [participants, setParticipants] = useState([]);
+  const [isProcessingAction, setIsProcessingAction] = useState(false);
 
   const stateRef = useRef(null);
   stateRef.current = state;
@@ -32,6 +41,7 @@ export default function HostLivePage({ pin, onEndQuiz, onNavigate }) {
   // Poll or initial fetch
   useEffect(() => {
     loadState();
+    loadParticipants();
   }, [pin]);
 
   async function loadState() {
@@ -46,6 +56,39 @@ export default function HostLivePage({ pin, onEndQuiz, onNavigate }) {
     }
   }
 
+  async function loadParticipants() {
+    try {
+      const list = await getSessionParticipants(pin);
+      setParticipants(list);
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  async function loadIncidents() {
+    try {
+      setLoadingIncidents(true);
+      const list = await getSessionIncidents(pin);
+      setIncidents(list);
+    } catch (e) {
+      console.error('Failed to load incidents:', e);
+    } finally {
+      setLoadingIncidents(false);
+    }
+  }
+
+  async function handleReviewIncident(incidentId, reviewStatus) {
+    try {
+      await reviewIncident(pin, incidentId, {
+        reviewStatus,
+        reviewNotes: `Marked ${reviewStatus} by faculty during examination`,
+      });
+      await loadIncidents();
+    } catch (err) {
+      alert(err.message || 'Failed to update incident status');
+    }
+  }
+
   // Real-time WebSocket connection
   useEffect(() => {
     const unsubscribe = connectSessionWebSocket(
@@ -56,6 +99,17 @@ export default function HostLivePage({ pin, onEndQuiz, onNavigate }) {
           setState((prev) =>
             prev ? { ...prev, participantCount: event.payload.participantCount } : prev
           );
+          if (event.payload.participants) {
+            setParticipants(event.payload.participants);
+          } else {
+            loadParticipants();
+          }
+        } else if (event.type === 'RULES_ACKNOWLEDGED') {
+          if (event.payload.participants) {
+            setParticipants(event.payload.participants);
+          } else {
+            loadParticipants();
+          }
         } else if (event.type === 'QUESTION_STARTED') {
           loadState();
         } else if (event.type === 'QUESTION_REVEALED') {
@@ -128,42 +182,73 @@ export default function HostLivePage({ pin, onEndQuiz, onNavigate }) {
   }, [state?.questionEndsAtEpochMs, state?.status]);
 
   async function handleStartQuiz() {
+    if (isProcessingAction) return;
+    setIsProcessingAction(true);
+    setActionMessage('Starting examination question 1...');
+    setError('');
     try {
       const updated = await startQuestion(pin, 0);
       setState(updated);
+      setActionMessage('');
     } catch (err) {
       setError(err.message || 'Failed to start quiz');
+    } finally {
+      setIsProcessingAction(false);
     }
   }
 
   async function handleReveal() {
+    if (isProcessingAction) return;
+    setIsProcessingAction(true);
+    setActionMessage('Authorizing answer reveal and calculating response rates...');
+    setError('');
     try {
       const updated = await revealAnswer(pin);
       setState(updated);
+      setActionMessage('');
     } catch (err) {
       setError(err.message || 'Failed to reveal answer');
+    } finally {
+      setIsProcessingAction(false);
     }
   }
 
   async function handleNextQuestion() {
+    if (isProcessingAction) return;
+    setIsProcessingAction(true);
+    setActionMessage('Advancing to next examination question...');
+    setError('');
     try {
       const updated = await nextQuestion(pin);
       setState(updated);
+      setActionMessage('');
       if (updated.status === 'FINISHED') {
         onEndQuiz(updated);
       }
     } catch (err) {
       setError(err.message || 'Failed to move to next question');
+    } finally {
+      setIsProcessingAction(false);
     }
   }
 
   async function handleEndQuiz() {
+    if (isProcessingAction) return;
+    if (!window.confirm('Are you sure you want to conclude this examination?')) {
+      return;
+    }
+    setIsProcessingAction(true);
+    setActionMessage('Concluding examination and publishing final score audit...');
+    setError('');
     try {
       const updated = await endQuiz(pin);
       setState(updated);
+      setActionMessage('');
       onEndQuiz(updated);
     } catch (err) {
       setError(err.message || 'Failed to end quiz');
+    } finally {
+      setIsProcessingAction(false);
     }
   }
 
@@ -342,7 +427,13 @@ export default function HostLivePage({ pin, onEndQuiz, onNavigate }) {
               </div>
 
               <div className="pt-2">
-                <span className="text-xs font-semibold text-slate-600">Connected Participants:</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-600">Connected Participants:</span>
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    Live Roster
+                  </span>
+                </div>
                 <div className="text-2xl font-bold text-slate-900 mt-0.5">
                   {state.participantCount} joined
                 </div>
@@ -365,14 +456,69 @@ export default function HostLivePage({ pin, onEndQuiz, onNavigate }) {
             </div>
           </div>
 
+          {/* Dynamic Participant Roster */}
+          <div className="max-w-2xl mx-auto mb-8 text-left bg-slate-50/80 rounded-xl p-4 border border-slate-200">
+            <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-200/60">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                Candidate Waiting Room ({participants.length})
+              </span>
+              <span className="text-[11px] text-slate-500">
+                {participants.filter(p => p.rulesAcknowledged).length} / {participants.length} acknowledged rules
+              </span>
+            </div>
+
+            {participants.length === 0 ? (
+              <div className="py-6 text-center text-slate-400 text-xs">
+                No candidates have joined yet. Share PIN <strong className="text-indigo-600 font-mono">{pin}</strong> or scan the QR code to enter.
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2 max-h-44 overflow-y-auto pr-1">
+                {participants.map((p, idx) => (
+                  <div
+                    key={p.candidateId || idx}
+                    className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs text-xs font-medium text-slate-800"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                    <span>{p.nickname}</span>
+                    {p.rulesAcknowledged ? (
+                      <span className="text-[10px] bg-indigo-50 text-indigo-700 font-semibold px-1.5 py-0.5 rounded border border-indigo-100" title="Examination rules accepted">
+                        ✓ Ready
+                      </span>
+                    ) : (
+                      <span className="text-[10px] bg-amber-50 text-amber-700 font-semibold px-1.5 py-0.5 rounded border border-amber-100" title="Awaiting rules acknowledgment">
+                        Rules pending
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {actionMessage && (
+            <div className="max-w-md mx-auto mb-4 p-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-xs text-indigo-700 font-medium flex items-center justify-center gap-2">
+              <span className="inline-block w-3.5 h-3.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></span>
+              <span>{actionMessage}</span>
+            </div>
+          )}
+
           <div className="max-w-sm mx-auto">
             <button
               id="host-start-quiz-btn"
               onClick={handleStartQuiz}
-              disabled={state.participantCount === 0}
-              className="w-full py-3.5 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-base shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={state.participantCount === 0 || isProcessingAction}
+              className="w-full py-3.5 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl text-base shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
-              {state.participantCount === 0 ? 'Waiting for Candidates to Join...' : 'Start Quiz Now'}
+              {isProcessingAction ? (
+                <>
+                  <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                  <span>Starting Examination...</span>
+                </>
+              ) : state.participantCount === 0 ? (
+                'Waiting for Candidates to Join...'
+              ) : (
+                'Start Quiz Now'
+              )}
             </button>
           </div>
         </div>
@@ -563,14 +709,37 @@ export default function HostLivePage({ pin, onEndQuiz, onNavigate }) {
         </div>
       </div>
 
-      {/* Host Action Controls */}
+      {/* Host Action Controls & In-flight Feedback */}
+      {actionMessage && (
+        <div className="mb-3 p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-700 font-medium flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin shrink-0"></span>
+            <span>{actionMessage}</span>
+          </div>
+          <span className="text-[11px] text-indigo-500 font-mono">Synchronizing state...</span>
+        </div>
+      )}
+
       <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center justify-between shadow-xs">
-        <div>
+        <div className="flex items-center gap-2">
           <button
             onClick={handleEndQuiz}
-            className="text-xs font-medium text-red-600 hover:text-red-700 px-3 py-1.5 rounded border border-red-200 hover:bg-red-50 transition-colors"
+            disabled={isProcessingAction}
+            className="text-xs font-medium text-red-600 hover:text-red-700 px-3 py-1.5 rounded border border-red-200 hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             End Quiz Early
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              loadIncidents();
+              setShowIncidentsModal(true);
+            }}
+            className="text-xs font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 px-3 py-1.5 rounded border border-amber-200 transition-colors flex items-center gap-1.5"
+          >
+            <span>🛡</span>
+            <span>Security Incidents ({state.totalIncidents !== undefined ? state.totalIncidents : incidents.length})</span>
           </button>
         </div>
 
@@ -579,29 +748,150 @@ export default function HostLivePage({ pin, onEndQuiz, onNavigate }) {
             <button
               id="host-reveal-btn"
               onClick={handleReveal}
-              className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-medium text-sm rounded-lg shadow-xs transition-colors"
+              disabled={isProcessingAction}
+              className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-medium text-sm rounded-lg shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
-              Reveal Answer
+              {isProcessingAction && actionMessage.includes('reveal') && (
+                <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+              )}
+              <span>Reveal Answer</span>
             </button>
           ) : isLastQuestion ? (
             <button
               id="host-view-results-btn"
               onClick={handleEndQuiz}
-              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-lg shadow-xs transition-colors"
+              disabled={isProcessingAction}
+              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-lg shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
-              Finish & View Final Leaderboard
+              {isProcessingAction && (
+                <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+              )}
+              <span>Finish & View Final Leaderboard</span>
             </button>
           ) : (
             <button
               id="host-next-question-btn"
               onClick={handleNextQuestion}
-              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-xs transition-colors"
+              disabled={isProcessingAction}
+              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm rounded-lg shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
-              Next Question →
+              {isProcessingAction && actionMessage.includes('Advancing') && (
+                <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+              )}
+              <span>Next Question →</span>
             </button>
           )}
         </div>
       </div>
+
+      {/* Incident Review Modal for Faculty */}
+      {showIncidentsModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-xl border border-slate-200 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  Examination Incident Audit Log
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Logged interruptions, fullscreen exits, and clipboard activities during Session PIN: {pin}
+                </p>
+              </div>
+              <button
+                onClick={() => setShowIncidentsModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+              {loadingIncidents ? (
+                <p className="text-xs text-slate-500 text-center py-6">Loading incident audit logs...</p>
+              ) : incidents.length === 0 ? (
+                <div className="text-center py-8 text-slate-500 text-xs">
+                  <span className="text-2xl block mb-1">✓</span>
+                  No security incidents or disruptions recorded for this examination session.
+                </div>
+              ) : (
+                incidents.map((inc) => (
+                  <div
+                    key={inc.id}
+                    className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between gap-3 text-xs"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-900">{inc.candidateNickname}</span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
+                          {inc.eventType}
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                            inc.reviewStatus === 'FLAGGED'
+                              ? 'bg-red-100 text-red-800'
+                              : inc.reviewStatus === 'DISMISSED'
+                              ? 'bg-slate-200 text-slate-600'
+                              : inc.reviewStatus === 'REVIEWED'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {inc.reviewStatus}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-600 mt-1">
+                        {inc.incidentDetails || 'Disruption recorded'}
+                      </p>
+                      <span className="text-[10px] text-slate-400">
+                        {new Date(inc.serverTimestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {inc.reviewStatus !== 'FLAGGED' && (
+                        <button
+                          type="button"
+                          onClick={() => handleReviewIncident(inc.id, 'FLAGGED')}
+                          className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded border border-red-200 text-[11px] font-medium"
+                        >
+                          Flag
+                        </button>
+                      )}
+                      {inc.reviewStatus !== 'DISMISSED' && (
+                        <button
+                          type="button"
+                          onClick={() => handleReviewIncident(inc.id, 'DISMISSED')}
+                          className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded border border-slate-300 text-[11px] font-medium"
+                        >
+                          Dismiss
+                        </button>
+                      )}
+                      {inc.reviewStatus !== 'REVIEWED' && (
+                        <button
+                          type="button"
+                          onClick={() => handleReviewIncident(inc.id, 'REVIEWED')}
+                          className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded border border-emerald-200 text-[11px] font-medium"
+                        >
+                          Mark Reviewed
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="pt-3 border-t border-slate-100 flex justify-end">
+              <button
+                onClick={() => setShowIncidentsModal(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

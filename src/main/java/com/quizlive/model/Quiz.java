@@ -25,6 +25,33 @@ public class Quiz {
     @Column(name = "answer_change_policy", nullable = false, length = 30)
     private AnswerChangePolicy answerChangePolicy = AnswerChangePolicy.SINGLE_SELECTION;
 
+    @Column(nullable = false)
+    private Boolean requireFullscreen = false;
+
+    @Column(nullable = false)
+    private Boolean monitorTabSwitch = false;
+
+    @Column(nullable = false)
+    private Boolean restrictCopyPaste = false;
+
+    @Column(nullable = false)
+    private Integer warningThreshold = 3;
+
+    @Column(nullable = false)
+    private Boolean shuffleQuestions = false;
+
+    @Column(nullable = false)
+    private Boolean shuffleOptions = false;
+
+    @Column(nullable = false)
+    private Boolean autoSubmitAtDeadline = true;
+
+    @Column(nullable = false)
+    private Boolean resultsPublished = true;
+
+    @Column(nullable = false)
+    private Boolean showCorrectAnswers = true;
+
     @Column(length = 50)
     private String facultyUsername;
 
@@ -80,6 +107,87 @@ public class Quiz {
 
     public void setAnswerChangePolicy(AnswerChangePolicy answerChangePolicy) {
         this.answerChangePolicy = answerChangePolicy;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public Boolean getRequireFullscreen() {
+        return requireFullscreen != null ? requireFullscreen : false;
+    }
+
+    public void setRequireFullscreen(Boolean requireFullscreen) {
+        this.requireFullscreen = requireFullscreen != null ? requireFullscreen : false;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public Boolean getMonitorTabSwitch() {
+        return monitorTabSwitch != null ? monitorTabSwitch : false;
+    }
+
+    public void setMonitorTabSwitch(Boolean monitorTabSwitch) {
+        this.monitorTabSwitch = monitorTabSwitch != null ? monitorTabSwitch : false;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public Boolean getRestrictCopyPaste() {
+        return restrictCopyPaste != null ? restrictCopyPaste : false;
+    }
+
+    public void setRestrictCopyPaste(Boolean restrictCopyPaste) {
+        this.restrictCopyPaste = restrictCopyPaste != null ? restrictCopyPaste : false;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public Integer getWarningThreshold() {
+        return warningThreshold != null ? warningThreshold : 3;
+    }
+
+    public void setWarningThreshold(Integer warningThreshold) {
+        this.warningThreshold = warningThreshold != null ? warningThreshold : 3;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public Boolean getShuffleQuestions() {
+        return shuffleQuestions != null ? shuffleQuestions : false;
+    }
+
+    public void setShuffleQuestions(Boolean shuffleQuestions) {
+        this.shuffleQuestions = shuffleQuestions != null ? shuffleQuestions : false;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public Boolean getShuffleOptions() {
+        return shuffleOptions != null ? shuffleOptions : false;
+    }
+
+    public void setShuffleOptions(Boolean shuffleOptions) {
+        this.shuffleOptions = shuffleOptions != null ? shuffleOptions : false;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public Boolean getAutoSubmitAtDeadline() {
+        return autoSubmitAtDeadline != null ? autoSubmitAtDeadline : true;
+    }
+
+    public void setAutoSubmitAtDeadline(Boolean autoSubmitAtDeadline) {
+        this.autoSubmitAtDeadline = autoSubmitAtDeadline != null ? autoSubmitAtDeadline : true;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public Boolean getResultsPublished() {
+        return resultsPublished != null ? resultsPublished : true;
+    }
+
+    public void setResultsPublished(Boolean resultsPublished) {
+        this.resultsPublished = resultsPublished != null ? resultsPublished : true;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public Boolean getShowCorrectAnswers() {
+        return showCorrectAnswers != null ? showCorrectAnswers : true;
+    }
+
+    public void setShowCorrectAnswers(Boolean showCorrectAnswers) {
+        this.showCorrectAnswers = showCorrectAnswers != null ? showCorrectAnswers : true;
         this.updatedAt = LocalDateTime.now();
     }
 

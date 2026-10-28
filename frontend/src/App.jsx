@@ -131,6 +131,7 @@ export default function App() {
           results={finalResults}
           isHost={isHost}
           candidateInfo={candidateInfo}
+          pin={activePin}
           onNavigate={handleNavigate}
         />
       )}

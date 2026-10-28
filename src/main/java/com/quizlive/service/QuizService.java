@@ -82,6 +82,15 @@ public class QuizService {
             if (dto.getAnswerChangePolicy() != null) {
                 quiz.setAnswerChangePolicy(dto.getAnswerChangePolicy());
             }
+            if (dto.getRequireFullscreen() != null) quiz.setRequireFullscreen(dto.getRequireFullscreen());
+            if (dto.getMonitorTabSwitch() != null) quiz.setMonitorTabSwitch(dto.getMonitorTabSwitch());
+            if (dto.getRestrictCopyPaste() != null) quiz.setRestrictCopyPaste(dto.getRestrictCopyPaste());
+            if (dto.getWarningThreshold() != null) quiz.setWarningThreshold(dto.getWarningThreshold());
+            if (dto.getShuffleQuestions() != null) quiz.setShuffleQuestions(dto.getShuffleQuestions());
+            if (dto.getShuffleOptions() != null) quiz.setShuffleOptions(dto.getShuffleOptions());
+            if (dto.getAutoSubmitAtDeadline() != null) quiz.setAutoSubmitAtDeadline(dto.getAutoSubmitAtDeadline());
+            if (dto.getResultsPublished() != null) quiz.setResultsPublished(dto.getResultsPublished());
+            if (dto.getShowCorrectAnswers() != null) quiz.setShowCorrectAnswers(dto.getShowCorrectAnswers());
         } else {
             quiz = new Quiz(dto.getTitle().trim());
             quiz.setFacultyUsername(facultyUsername);
@@ -89,6 +98,15 @@ public class QuizService {
             if (dto.getAnswerChangePolicy() != null) {
                 quiz.setAnswerChangePolicy(dto.getAnswerChangePolicy());
             }
+            if (dto.getRequireFullscreen() != null) quiz.setRequireFullscreen(dto.getRequireFullscreen());
+            if (dto.getMonitorTabSwitch() != null) quiz.setMonitorTabSwitch(dto.getMonitorTabSwitch());
+            if (dto.getRestrictCopyPaste() != null) quiz.setRestrictCopyPaste(dto.getRestrictCopyPaste());
+            if (dto.getWarningThreshold() != null) quiz.setWarningThreshold(dto.getWarningThreshold());
+            if (dto.getShuffleQuestions() != null) quiz.setShuffleQuestions(dto.getShuffleQuestions());
+            if (dto.getShuffleOptions() != null) quiz.setShuffleOptions(dto.getShuffleOptions());
+            if (dto.getAutoSubmitAtDeadline() != null) quiz.setAutoSubmitAtDeadline(dto.getAutoSubmitAtDeadline());
+            if (dto.getResultsPublished() != null) quiz.setResultsPublished(dto.getResultsPublished());
+            if (dto.getShowCorrectAnswers() != null) quiz.setShowCorrectAnswers(dto.getShowCorrectAnswers());
             quiz.setCreatedAt(LocalDateTime.now());
             quiz.setUpdatedAt(LocalDateTime.now());
         }
@@ -223,6 +241,64 @@ public class QuizService {
     }
 
     @Transactional
+    public QuizDto updateResultPublication(Long quizId, boolean published) {
+        Quiz quiz = quizRepository.findById(quizId)
+                .orElseThrow(() -> new IllegalArgumentException("Quiz not found with id: " + quizId));
+        quiz.setResultsPublished(published);
+        quiz.setUpdatedAt(LocalDateTime.now());
+        Quiz saved = quizRepository.save(quiz);
+        return toDto(saved);
+    }
+
+    @Transactional
+    public QuizDto duplicateQuiz(Long quizId, String facultyUsername) {
+        Quiz original = quizRepository.findById(quizId)
+                .orElseThrow(() -> new IllegalArgumentException("Quiz not found with id: " + quizId));
+
+        Quiz copy = new Quiz();
+        copy.setTitle("Copy of " + original.getTitle().trim());
+        copy.setFacultyUsername(facultyUsername != null && !facultyUsername.trim().isEmpty() ? facultyUsername : original.getFacultyUsername());
+        copy.setExamStatus(ExamStatus.DRAFT);
+        copy.setAnswerChangePolicy(original.getAnswerChangePolicy());
+        copy.setRequireFullscreen(original.getRequireFullscreen());
+        copy.setMonitorTabSwitch(original.getMonitorTabSwitch());
+        copy.setRestrictCopyPaste(original.getRestrictCopyPaste());
+        copy.setWarningThreshold(original.getWarningThreshold());
+        copy.setShuffleQuestions(original.getShuffleQuestions());
+        copy.setShuffleOptions(original.getShuffleOptions());
+        copy.setAutoSubmitAtDeadline(original.getAutoSubmitAtDeadline());
+        copy.setResultsPublished(original.getResultsPublished());
+        copy.setShowCorrectAnswers(original.getShowCorrectAnswers());
+        copy.setCreatedAt(LocalDateTime.now());
+        copy.setUpdatedAt(LocalDateTime.now());
+
+        if (original.getQuestions() != null) {
+            for (Question origQ : original.getQuestions()) {
+                Question newQ = new Question();
+                newQ.setQuestionText(origQ.getQuestionText());
+                newQ.setTimeLimit(origQ.getTimeLimit());
+                newQ.setMarks(origQ.getMarks());
+                newQ.setOrderIndex(origQ.getOrderIndex());
+
+                if (origQ.getOptions() != null) {
+                    for (AnswerOption origOpt : origQ.getOptions()) {
+                        AnswerOption newOpt = new AnswerOption(
+                                origOpt.getOptionLabel(),
+                                origOpt.getOptionText(),
+                                origOpt.getIsCorrect()
+                        );
+                        newQ.addOption(newOpt);
+                    }
+                }
+                copy.addQuestion(newQ);
+            }
+        }
+
+        Quiz saved = quizRepository.save(copy);
+        return toDto(saved);
+    }
+
+    @Transactional
     public void deleteQuiz(Long quizId) {
         Quiz quiz = quizRepository.findById(quizId)
                 .orElseThrow(() -> new IllegalArgumentException("Quiz not found with id: " + quizId));
@@ -238,6 +314,15 @@ public class QuizService {
         dto.setTitle(quiz.getTitle());
         dto.setExamStatus(quiz.getExamStatus());
         dto.setAnswerChangePolicy(quiz.getAnswerChangePolicy());
+        dto.setRequireFullscreen(quiz.getRequireFullscreen());
+        dto.setMonitorTabSwitch(quiz.getMonitorTabSwitch());
+        dto.setRestrictCopyPaste(quiz.getRestrictCopyPaste());
+        dto.setWarningThreshold(quiz.getWarningThreshold());
+        dto.setShuffleQuestions(quiz.getShuffleQuestions());
+        dto.setShuffleOptions(quiz.getShuffleOptions());
+        dto.setAutoSubmitAtDeadline(quiz.getAutoSubmitAtDeadline());
+        dto.setResultsPublished(quiz.getResultsPublished());
+        dto.setShowCorrectAnswers(quiz.getShowCorrectAnswers());
         dto.setFacultyUsername(quiz.getFacultyUsername());
         dto.setCreatedAt(quiz.getCreatedAt());
         dto.setUpdatedAt(quiz.getUpdatedAt());

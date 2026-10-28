@@ -25,7 +25,25 @@ public class CandidateStateResponse {
     private Long totalIncorrect;         // When finished
     private List<LeaderboardEntryDto> leaderboard; // When finished
 
+    // Security & Examination Mode attributes
+    private boolean requireFullscreen;
+    private boolean monitorTabSwitch;
+    private boolean restrictCopyPaste;
+    private int warningThreshold = 3;
+    private long myIncidentCount = 0;
+    private boolean resultsPublished = true;
+    private boolean showCorrectAnswers = true;
+    private boolean rulesAcknowledged = false;
+
     public CandidateStateResponse() {}
+
+    public boolean isRulesAcknowledged() {
+        return rulesAcknowledged;
+    }
+
+    public void setRulesAcknowledged(boolean rulesAcknowledged) {
+        this.rulesAcknowledged = rulesAcknowledged;
+    }
 
     public String getPin() {
         return pin;
@@ -185,5 +203,61 @@ public class CandidateStateResponse {
 
     public void setLeaderboard(List<LeaderboardEntryDto> leaderboard) {
         this.leaderboard = leaderboard;
+    }
+
+    public boolean isRequireFullscreen() {
+        return requireFullscreen;
+    }
+
+    public void setRequireFullscreen(boolean requireFullscreen) {
+        this.requireFullscreen = requireFullscreen;
+    }
+
+    public boolean isMonitorTabSwitch() {
+        return monitorTabSwitch;
+    }
+
+    public void setMonitorTabSwitch(boolean monitorTabSwitch) {
+        this.monitorTabSwitch = monitorTabSwitch;
+    }
+
+    public boolean isRestrictCopyPaste() {
+        return restrictCopyPaste;
+    }
+
+    public void setRestrictCopyPaste(boolean restrictCopyPaste) {
+        this.restrictCopyPaste = restrictCopyPaste;
+    }
+
+    public int getWarningThreshold() {
+        return warningThreshold;
+    }
+
+    public void setWarningThreshold(int warningThreshold) {
+        this.warningThreshold = warningThreshold;
+    }
+
+    public long getMyIncidentCount() {
+        return myIncidentCount;
+    }
+
+    public void setMyIncidentCount(long myIncidentCount) {
+        this.myIncidentCount = myIncidentCount;
+    }
+
+    public boolean isResultsPublished() {
+        return resultsPublished;
+    }
+
+    public void setResultsPublished(boolean resultsPublished) {
+        this.resultsPublished = resultsPublished;
+    }
+
+    public boolean isShowCorrectAnswers() {
+        return showCorrectAnswers;
+    }
+
+    public void setShowCorrectAnswers(boolean showCorrectAnswers) {
+        this.showCorrectAnswers = showCorrectAnswers;
     }
 }

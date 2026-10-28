@@ -177,6 +177,41 @@ public class QuizController {
         }
     }
 
+    @PatchMapping("/{id}/publication")
+    public ResponseEntity<?> updatePublication(
+            @PathVariable Long id,
+            @RequestBody Map<String, Boolean> payload,
+            @RequestHeader(value = "Authorization", required = false) String authHeader
+    ) {
+        try {
+            authService.validateFaculty(authHeader);
+            Boolean published = payload.get("resultsPublished");
+            if (published == null) {
+                return ResponseEntity.badRequest().body(Map.of("error", "resultsPublished boolean required"));
+            }
+            QuizDto updated = quizService.updateResultPublication(id, published);
+            return ResponseEntity.ok(updated);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/{id}/duplicate")
+    public ResponseEntity<?> duplicateQuiz(
+            @PathVariable Long id,
+            @RequestHeader(value = "Authorization", required = false) String authHeader
+    ) {
+        try {
+            Faculty faculty = authService.validateFaculty(authHeader);
+            QuizDto duplicated = quizService.duplicateQuiz(id, faculty.getUsername());
+            return ResponseEntity.status(HttpStatus.CREATED).body(duplicated);
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason()));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteQuiz(
             @PathVariable Long id,

@@ -7,6 +7,7 @@ import java.util.Map;
 
 public class SessionStateResponse {
     private String pin;
+    private Long quizId;
     private String quizTitle;
     private SessionStatus status;
     private int currentQuestionIndex;
@@ -19,6 +20,10 @@ public class SessionStateResponse {
     private long remainingSeconds;
     private long participantCount;
     private long submissionCount;
+    private long totalIncidents = 0;
+    private boolean requireFullscreen;
+    private boolean monitorTabSwitch;
+    private boolean restrictCopyPaste;
     private Map<String, Long> optionCounts = new HashMap<>();
     private List<LeaderboardEntryDto> leaderboard;
 
@@ -30,6 +35,14 @@ public class SessionStateResponse {
 
     public void setPin(String pin) {
         this.pin = pin;
+    }
+
+    public Long getQuizId() {
+        return quizId;
+    }
+
+    public void setQuizId(Long quizId) {
+        this.quizId = quizId;
     }
 
     public String getQuizTitle() {
@@ -126,6 +139,38 @@ public class SessionStateResponse {
 
     public void setSubmissionCount(long submissionCount) {
         this.submissionCount = submissionCount;
+    }
+
+    public long getTotalIncidents() {
+        return totalIncidents;
+    }
+
+    public void setTotalIncidents(long totalIncidents) {
+        this.totalIncidents = totalIncidents;
+    }
+
+    public boolean isRequireFullscreen() {
+        return requireFullscreen;
+    }
+
+    public void setRequireFullscreen(boolean requireFullscreen) {
+        this.requireFullscreen = requireFullscreen;
+    }
+
+    public boolean isMonitorTabSwitch() {
+        return monitorTabSwitch;
+    }
+
+    public void setMonitorTabSwitch(boolean monitorTabSwitch) {
+        this.monitorTabSwitch = monitorTabSwitch;
+    }
+
+    public boolean isRestrictCopyPaste() {
+        return restrictCopyPaste;
+    }
+
+    public void setRestrictCopyPaste(boolean restrictCopyPaste) {
+        this.restrictCopyPaste = restrictCopyPaste;
     }
 
     public Map<String, Long> getOptionCounts() {

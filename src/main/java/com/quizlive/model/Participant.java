@@ -35,6 +35,9 @@ public class Participant {
     private Boolean connected = true;
 
     @Column(nullable = false)
+    private Boolean rulesAcknowledged = false;
+
+    @Column(nullable = false)
     private LocalDateTime joinedAt = LocalDateTime.now();
 
     public Participant() {}
@@ -46,6 +49,7 @@ public class Participant {
         this.nickname = nickname;
         this.score = 0;
         this.connected = true;
+        this.rulesAcknowledged = false;
         this.joinedAt = LocalDateTime.now();
     }
 
@@ -103,6 +107,14 @@ public class Participant {
 
     public void setConnected(Boolean connected) {
         this.connected = connected;
+    }
+
+    public Boolean getRulesAcknowledged() {
+        return rulesAcknowledged;
+    }
+
+    public void setRulesAcknowledged(Boolean rulesAcknowledged) {
+        this.rulesAcknowledged = rulesAcknowledged;
     }
 
     public LocalDateTime getJoinedAt() {

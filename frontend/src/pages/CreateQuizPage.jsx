@@ -7,6 +7,7 @@ import {
   createSession,
   getQuizPreview,
   deleteQuiz,
+  duplicateQuiz,
 } from '../services/api';
 import ExamPreviewModal from '../components/ExamPreviewModal';
 
@@ -20,6 +21,12 @@ export default function CreateQuizPage({ onSessionCreated, onNavigate }) {
   const [title, setTitle] = useState('');
   const [examStatus, setExamStatus] = useState('DRAFT');
   const [answerChangePolicy, setAnswerChangePolicy] = useState('SINGLE_SELECTION');
+  const [requireFullscreen, setRequireFullscreen] = useState(false);
+  const [monitorTabSwitch, setMonitorTabSwitch] = useState(false);
+  const [restrictCopyPaste, setRestrictCopyPaste] = useState(false);
+  const [warningThreshold, setWarningThreshold] = useState(3);
+  const [resultsPublished, setResultsPublished] = useState(true);
+  const [showCorrectAnswers, setShowCorrectAnswers] = useState(true);
   const [questions, setQuestions] = useState([
     {
       questionText: '',
@@ -130,6 +137,12 @@ export default function CreateQuizPage({ onSessionCreated, onNavigate }) {
     setTitle(quiz.title);
     setExamStatus(quiz.examStatus || 'DRAFT');
     setAnswerChangePolicy(quiz.answerChangePolicy || 'SINGLE_SELECTION');
+    setRequireFullscreen(Boolean(quiz.requireFullscreen));
+    setMonitorTabSwitch(Boolean(quiz.monitorTabSwitch));
+    setRestrictCopyPaste(Boolean(quiz.restrictCopyPaste));
+    setWarningThreshold(quiz.warningThreshold !== undefined && quiz.warningThreshold !== null ? quiz.warningThreshold : 3);
+    setResultsPublished(quiz.resultsPublished !== undefined && quiz.resultsPublished !== null ? Boolean(quiz.resultsPublished) : true);
+    setShowCorrectAnswers(quiz.showCorrectAnswers !== undefined && quiz.showCorrectAnswers !== null ? Boolean(quiz.showCorrectAnswers) : true);
     if (quiz.questions && quiz.questions.length > 0) {
       setQuestions(
         quiz.questions.map((q) => ({
@@ -156,6 +169,12 @@ export default function CreateQuizPage({ onSessionCreated, onNavigate }) {
     setTitle('');
     setExamStatus('DRAFT');
     setAnswerChangePolicy('SINGLE_SELECTION');
+    setRequireFullscreen(false);
+    setMonitorTabSwitch(false);
+    setRestrictCopyPaste(false);
+    setWarningThreshold(3);
+    setResultsPublished(true);
+    setShowCorrectAnswers(true);
     setQuestions([
       {
         questionText: '',
@@ -188,6 +207,12 @@ export default function CreateQuizPage({ onSessionCreated, onNavigate }) {
         title: title.trim(),
         examStatus: 'DRAFT',
         answerChangePolicy,
+        requireFullscreen,
+        monitorTabSwitch,
+        restrictCopyPaste,
+        warningThreshold: parseInt(warningThreshold) || 3,
+        resultsPublished,
+        showCorrectAnswers,
         questions: questions.map((q, idx) => ({
           ...q,
           orderIndex: idx,
@@ -241,6 +266,12 @@ export default function CreateQuizPage({ onSessionCreated, onNavigate }) {
         title: title.trim(),
         examStatus: 'SCHEDULED',
         answerChangePolicy,
+        requireFullscreen,
+        monitorTabSwitch,
+        restrictCopyPaste,
+        warningThreshold: parseInt(warningThreshold) || 3,
+        resultsPublished,
+        showCorrectAnswers,
         questions: questions.map((q, idx) => ({
           ...q,
           orderIndex: idx,
@@ -301,6 +332,22 @@ export default function CreateQuizPage({ onSessionCreated, onNavigate }) {
       loadQuizzes();
     } catch (err) {
       setError(err.message || 'Failed to delete examination');
+    }
+  }
+
+  async function handleDuplicateQuiz(quizId, e) {
+    if (e) e.stopPropagation();
+    setError('');
+    setSuccessMessage('');
+    try {
+      setSaving(true);
+      const copy = await duplicateQuiz(quizId);
+      setSuccessMessage(`Duplicated quiz successfully: "${copy.title}" created as draft.`);
+      await loadQuizzes();
+    } catch (err) {
+      setError(err.message || 'Failed to duplicate examination');
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -425,6 +472,15 @@ export default function CreateQuizPage({ onSessionCreated, onNavigate }) {
                   >
                     Preview
                   </button>
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={(e) => handleDuplicateQuiz(quiz.id, e)}
+                    className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-medium border border-slate-200 rounded-md transition-colors disabled:opacity-50"
+                    title="Duplicate this examination into a new editable draft"
+                  >
+                    Duplicate
+                  </button>
                   {quiz.examStatus !== 'LIVE' && quiz.examStatus !== 'COMPLETED' && (
                     <button
                       onClick={() => loadQuizIntoEditor(quiz)}
@@ -530,6 +586,95 @@ export default function CreateQuizPage({ onSessionCreated, onNavigate }) {
                       Students can change their answer while active until deadline.
                     </span>
                   </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Examination Security & Integrity Settings */}
+            <div className="pt-3 border-t border-slate-100">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2">
+                Examination Security & Integrity Controls
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <label className="flex items-start gap-2.5 p-3 rounded-lg border border-slate-200 hover:border-slate-300 bg-white cursor-pointer transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={requireFullscreen}
+                    onChange={(e) => setRequireFullscreen(e.target.checked)}
+                    className="mt-0.5 text-indigo-600 rounded focus:ring-indigo-500"
+                  />
+                  <div>
+                    <span className="block text-xs font-semibold text-slate-900">Enforce Fullscreen</span>
+                    <span className="block text-[11px] text-slate-500 mt-0.5">
+                      Prompts and monitors student fullscreen status.
+                    </span>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-2.5 p-3 rounded-lg border border-slate-200 hover:border-slate-300 bg-white cursor-pointer transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={monitorTabSwitch}
+                    onChange={(e) => setMonitorTabSwitch(e.target.checked)}
+                    className="mt-0.5 text-indigo-600 rounded focus:ring-indigo-500"
+                  />
+                  <div>
+                    <span className="block text-xs font-semibold text-slate-900">Monitor Tab Switching</span>
+                    <span className="block text-[11px] text-slate-500 mt-0.5">
+                      Detects when student leaves exam window or tab.
+                    </span>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-2.5 p-3 rounded-lg border border-slate-200 hover:border-slate-300 bg-white cursor-pointer transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={restrictCopyPaste}
+                    onChange={(e) => setRestrictCopyPaste(e.target.checked)}
+                    className="mt-0.5 text-indigo-600 rounded focus:ring-indigo-500"
+                  />
+                  <div>
+                    <span className="block text-xs font-semibold text-slate-900">Restrict Copy / Paste</span>
+                    <span className="block text-[11px] text-slate-500 mt-0.5">
+                      Disables selection and blocks clipboard shortcuts.
+                    </span>
+                  </div>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3 pt-3 border-t border-slate-100 items-center">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Warning Threshold (Incidents)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10"
+                    value={warningThreshold}
+                    onChange={(e) => setWarningThreshold(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-xs text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                </div>
+
+                <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer pt-4">
+                  <input
+                    type="checkbox"
+                    checked={resultsPublished}
+                    onChange={(e) => setResultsPublished(e.target.checked)}
+                    className="text-indigo-600 rounded focus:ring-indigo-500"
+                  />
+                  <span>Publish Results to Students</span>
+                </label>
+
+                <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer pt-4">
+                  <input
+                    type="checkbox"
+                    checked={showCorrectAnswers}
+                    onChange={(e) => setShowCorrectAnswers(e.target.checked)}
+                    className="text-indigo-600 rounded focus:ring-indigo-500"
+                  />
+                  <span>Reveal Correct Answers</span>
                 </label>
               </div>
             </div>

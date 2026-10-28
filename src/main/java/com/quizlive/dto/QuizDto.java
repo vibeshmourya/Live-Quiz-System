@@ -11,6 +11,15 @@ public class QuizDto {
     private String title;
     private ExamStatus examStatus = ExamStatus.DRAFT;
     private AnswerChangePolicy answerChangePolicy = AnswerChangePolicy.SINGLE_SELECTION;
+    private Boolean requireFullscreen = false;
+    private Boolean monitorTabSwitch = false;
+    private Boolean restrictCopyPaste = false;
+    private Integer warningThreshold = 3;
+    private Boolean shuffleQuestions = false;
+    private Boolean shuffleOptions = false;
+    private Boolean autoSubmitAtDeadline = true;
+    private Boolean resultsPublished = true;
+    private Boolean showCorrectAnswers = true;
     private String facultyUsername;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -50,6 +59,78 @@ public class QuizDto {
 
     public void setAnswerChangePolicy(AnswerChangePolicy answerChangePolicy) {
         this.answerChangePolicy = answerChangePolicy;
+    }
+
+    public Boolean getRequireFullscreen() {
+        return requireFullscreen != null ? requireFullscreen : false;
+    }
+
+    public void setRequireFullscreen(Boolean requireFullscreen) {
+        this.requireFullscreen = requireFullscreen != null ? requireFullscreen : false;
+    }
+
+    public Boolean getMonitorTabSwitch() {
+        return monitorTabSwitch != null ? monitorTabSwitch : false;
+    }
+
+    public void setMonitorTabSwitch(Boolean monitorTabSwitch) {
+        this.monitorTabSwitch = monitorTabSwitch != null ? monitorTabSwitch : false;
+    }
+
+    public Boolean getRestrictCopyPaste() {
+        return restrictCopyPaste != null ? restrictCopyPaste : false;
+    }
+
+    public void setRestrictCopyPaste(Boolean restrictCopyPaste) {
+        this.restrictCopyPaste = restrictCopyPaste != null ? restrictCopyPaste : false;
+    }
+
+    public Integer getWarningThreshold() {
+        return warningThreshold != null ? warningThreshold : 3;
+    }
+
+    public void setWarningThreshold(Integer warningThreshold) {
+        this.warningThreshold = warningThreshold != null ? warningThreshold : 3;
+    }
+
+    public Boolean getShuffleQuestions() {
+        return shuffleQuestions != null ? shuffleQuestions : false;
+    }
+
+    public void setShuffleQuestions(Boolean shuffleQuestions) {
+        this.shuffleQuestions = shuffleQuestions != null ? shuffleQuestions : false;
+    }
+
+    public Boolean getShuffleOptions() {
+        return shuffleOptions != null ? shuffleOptions : false;
+    }
+
+    public void setShuffleOptions(Boolean shuffleOptions) {
+        this.shuffleOptions = shuffleOptions != null ? shuffleOptions : false;
+    }
+
+    public Boolean getAutoSubmitAtDeadline() {
+        return autoSubmitAtDeadline != null ? autoSubmitAtDeadline : true;
+    }
+
+    public void setAutoSubmitAtDeadline(Boolean autoSubmitAtDeadline) {
+        this.autoSubmitAtDeadline = autoSubmitAtDeadline != null ? autoSubmitAtDeadline : true;
+    }
+
+    public Boolean getResultsPublished() {
+        return resultsPublished != null ? resultsPublished : true;
+    }
+
+    public void setResultsPublished(Boolean resultsPublished) {
+        this.resultsPublished = resultsPublished != null ? resultsPublished : true;
+    }
+
+    public Boolean getShowCorrectAnswers() {
+        return showCorrectAnswers != null ? showCorrectAnswers : true;
+    }
+
+    public void setShowCorrectAnswers(Boolean showCorrectAnswers) {
+        this.showCorrectAnswers = showCorrectAnswers != null ? showCorrectAnswers : true;
     }
 
     public String getFacultyUsername() {

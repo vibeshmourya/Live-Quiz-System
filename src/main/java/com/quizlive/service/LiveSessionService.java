@@ -18,6 +18,7 @@ public class LiveSessionService {
     private final QuizRepository quizRepository;
     private final ParticipantRepository participantRepository;
     private final SubmissionRepository submissionRepository;
+    private final ExamIncidentRepository examIncidentRepository;
     private final SimpMessagingTemplate messagingTemplate;
 
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -27,12 +28,14 @@ public class LiveSessionService {
             QuizRepository quizRepository,
             ParticipantRepository participantRepository,
             SubmissionRepository submissionRepository,
+            ExamIncidentRepository examIncidentRepository,
             SimpMessagingTemplate messagingTemplate
     ) {
         this.liveSessionRepository = liveSessionRepository;
         this.quizRepository = quizRepository;
         this.participantRepository = participantRepository;
         this.submissionRepository = submissionRepository;
+        this.examIncidentRepository = examIncidentRepository;
         this.messagingTemplate = messagingTemplate;
     }
 
@@ -96,15 +99,56 @@ public class LiveSessionService {
         participant = participantRepository.save(participant);
 
         long participantCount = participantRepository.countBySessionPin(session.getPin());
+        List<ParticipantDto> participantList = getSessionParticipants(session.getPin());
 
         // Broadcast to both host and candidates topic
         Map<String, Object> joinPayload = new HashMap<>();
         joinPayload.put("participantCount", participantCount);
         joinPayload.put("nickname", participant.getNickname());
         joinPayload.put("candidateId", participant.getCandidateId());
+        joinPayload.put("participants", participantList);
 
         messagingTemplate.convertAndSend("/topic/session/" + session.getPin(),
                 new WsMessage("PARTICIPANT_JOINED", joinPayload));
+
+        return participant;
+    }
+
+    @Transactional(readOnly = true)
+    public List<ParticipantDto> getSessionParticipants(String pin) {
+        List<Participant> participants = participantRepository.findBySessionPinOrderByScoreDesc(pin);
+        List<ParticipantDto> list = new ArrayList<>();
+        for (Participant p : participants) {
+            list.add(new ParticipantDto(
+                    p.getId(),
+                    p.getCandidateId(),
+                    p.getNickname(),
+                    p.getScore(),
+                    p.getConnected(),
+                    p.getRulesAcknowledged(),
+                    p.getJoinedAt()
+            ));
+        }
+        return list;
+    }
+
+    @Transactional
+    public Participant acknowledgeRules(String pin, String candidateId) {
+        Participant participant = participantRepository.findBySessionPinAndCandidateId(pin, candidateId)
+                .orElseThrow(() -> new IllegalArgumentException("Participant not recognized for session: " + pin));
+
+        participant.setRulesAcknowledged(true);
+        participant = participantRepository.save(participant);
+
+        List<ParticipantDto> participantList = getSessionParticipants(pin);
+        Map<String, Object> ackPayload = new HashMap<>();
+        ackPayload.put("candidateId", candidateId);
+        ackPayload.put("nickname", participant.getNickname());
+        ackPayload.put("rulesAcknowledged", true);
+        ackPayload.put("participants", participantList);
+
+        messagingTemplate.convertAndSend("/topic/session/" + pin,
+                new WsMessage("RULES_ACKNOWLEDGED", ackPayload));
 
         return participant;
     }
@@ -141,6 +185,10 @@ public class LiveSessionService {
         questionPayload.put("endsAt", now + durationMs);
         questionPayload.put("timeLimit", currentQuestion.getTimeLimit());
         questionPayload.put("allowReselection", session.getQuiz().getAnswerChangePolicy() == AnswerChangePolicy.ALLOW_RESELECTION);
+        questionPayload.put("requireFullscreen", session.getQuiz().getRequireFullscreen());
+        questionPayload.put("monitorTabSwitch", session.getQuiz().getMonitorTabSwitch());
+        questionPayload.put("restrictCopyPaste", session.getQuiz().getRestrictCopyPaste());
+        questionPayload.put("warningThreshold", session.getQuiz().getWarningThreshold());
 
         messagingTemplate.convertAndSend("/topic/session/" + pin,
                 new WsMessage("QUESTION_STARTED", questionPayload));
@@ -164,6 +212,10 @@ public class LiveSessionService {
 
         Participant participant = participantRepository.findBySessionPinAndCandidateId(session.getPin(), request.getCandidateId())
                 .orElseThrow(() -> new IllegalArgumentException("Participant not recognized for this session"));
+
+        if (Boolean.FALSE.equals(participant.getRulesAcknowledged())) {
+            throw new IllegalStateException("Mandatory examination rules must be acknowledged before submitting answers");
+        }
 
         Question currentQuestion = session.getQuiz().getQuestions().get(session.getCurrentQuestionIndex());
         if (!currentQuestion.getId().equals(request.getQuestionId())) {
@@ -257,8 +309,10 @@ public class LiveSessionService {
 
         OptionStatsDto stats = getOptionStats(session.getId(), currentQuestion.getId());
 
+        boolean showAnswers = Boolean.TRUE.equals(session.getQuiz().getShowCorrectAnswers());
         Map<String, Object> revealPayload = new HashMap<>();
-        revealPayload.put("correctOptionLabel", correctLabel);
+        revealPayload.put("correctOptionLabel", showAnswers ? correctLabel : null);
+        revealPayload.put("showCorrectAnswers", showAnswers);
         revealPayload.put("correctPercentage", Math.round(correctPercent * 10.0) / 10.0);
         revealPayload.put("counts", stats.getCounts());
         revealPayload.put("totalSubmissions", totalSubmissions);
@@ -297,10 +351,12 @@ public class LiveSessionService {
             quizRepository.save(quiz);
         }
 
+        boolean resultsPublished = Boolean.TRUE.equals(session.getQuiz().getResultsPublished());
         List<LeaderboardEntryDto> leaderboard = getLeaderboard(session.getId());
 
         Map<String, Object> finishPayload = new HashMap<>();
-        finishPayload.put("leaderboard", leaderboard);
+        finishPayload.put("resultsPublished", resultsPublished);
+        finishPayload.put("leaderboard", resultsPublished ? leaderboard : Collections.emptyList());
 
         messagingTemplate.convertAndSend("/topic/session/" + pin,
                 new WsMessage("SESSION_FINISHED", finishPayload));
@@ -315,10 +371,15 @@ public class LiveSessionService {
 
         SessionStateResponse resp = new SessionStateResponse();
         resp.setPin(session.getPin());
+        resp.setQuizId(session.getQuiz().getId());
         resp.setQuizTitle(session.getQuiz().getTitle());
         resp.setStatus(session.getStatus());
         resp.setCurrentQuestionIndex(session.getCurrentQuestionIndex());
         resp.setTotalQuestions(session.getQuiz().getQuestions().size());
+        resp.setRequireFullscreen(session.getQuiz().getRequireFullscreen());
+        resp.setMonitorTabSwitch(session.getQuiz().getMonitorTabSwitch());
+        resp.setRestrictCopyPaste(session.getQuiz().getRestrictCopyPaste());
+        resp.setTotalIncidents(examIncidentRepository.countByLiveSessionId(session.getId()));
 
         long participantCount = participantRepository.countBySessionPin(session.getPin());
         resp.setParticipantCount(participantCount);
@@ -379,12 +440,21 @@ public class LiveSessionService {
         resp.setCurrentQuestionIndex(session.getCurrentQuestionIndex());
         resp.setTotalQuestions(session.getQuiz().getQuestions().size());
         resp.setAllowReselection(session.getQuiz().getAnswerChangePolicy() == AnswerChangePolicy.ALLOW_RESELECTION);
+        resp.setRequireFullscreen(session.getQuiz().getRequireFullscreen());
+        resp.setMonitorTabSwitch(session.getQuiz().getMonitorTabSwitch());
+        resp.setRestrictCopyPaste(session.getQuiz().getRestrictCopyPaste());
+        resp.setWarningThreshold(session.getQuiz().getWarningThreshold());
+        resp.setResultsPublished(session.getQuiz().getResultsPublished());
+        resp.setShowCorrectAnswers(session.getQuiz().getShowCorrectAnswers());
 
         if (participant != null) {
             resp.setNickname(participant.getNickname());
             resp.setMyScore(participant.getScore());
+            resp.setMyIncidentCount(examIncidentRepository.countByLiveSessionIdAndParticipantId(session.getId(), participant.getId()));
+            resp.setRulesAcknowledged(Boolean.TRUE.equals(participant.getRulesAcknowledged()));
         }
 
+        boolean showCorrect = Boolean.TRUE.equals(session.getQuiz().getShowCorrectAnswers());
         if (session.getStatus() != SessionStatus.WAITING && session.getCurrentQuestionIndex() < session.getQuiz().getQuestions().size()) {
             Question currentQuestion = session.getQuiz().getQuestions().get(session.getCurrentQuestionIndex());
             resp.setCurrentQuestion(toCandidateQuestionDto(currentQuestion));
@@ -395,7 +465,7 @@ public class LiveSessionService {
                 if (sub.isPresent()) {
                     resp.setHasSubmitted(true);
                     resp.setMySelectedLabel(sub.get().getSelectedLabel());
-                    if (session.getStatus() == SessionStatus.QUESTION_REVEALED || session.getStatus() == SessionStatus.FINISHED) {
+                    if ((session.getStatus() == SessionStatus.QUESTION_REVEALED || session.getStatus() == SessionStatus.FINISHED) && showCorrect) {
                         resp.setWasCorrect(sub.get().getIsCorrect());
                     }
                 } else {
@@ -403,7 +473,7 @@ public class LiveSessionService {
                 }
             }
 
-            if (session.getStatus() == SessionStatus.QUESTION_REVEALED || session.getStatus() == SessionStatus.FINISHED) {
+            if ((session.getStatus() == SessionStatus.QUESTION_REVEALED || session.getStatus() == SessionStatus.FINISHED) && showCorrect) {
                 String correctLabel = currentQuestion.getOptions().stream()
                         .filter(AnswerOption::getIsCorrect)
                         .map(AnswerOption::getOptionLabel)
@@ -424,20 +494,30 @@ public class LiveSessionService {
         resp.setRemainingSeconds(remaining);
 
         if (session.getStatus() == SessionStatus.FINISHED) {
-            List<LeaderboardEntryDto> leaderboard = getLeaderboard(session.getId());
-            resp.setLeaderboard(leaderboard);
+            boolean isPublished = Boolean.TRUE.equals(session.getQuiz().getResultsPublished());
+            if (isPublished) {
+                List<LeaderboardEntryDto> leaderboard = getLeaderboard(session.getId());
+                resp.setLeaderboard(leaderboard);
 
-            if (participant != null) {
-                for (LeaderboardEntryDto entry : leaderboard) {
-                    if (entry.getCandidateId().equals(candidateId)) {
-                        resp.setMyRank(entry.getRank());
-                        break;
+                if (participant != null) {
+                    for (LeaderboardEntryDto entry : leaderboard) {
+                        if (entry.getCandidateId().equals(candidateId)) {
+                            resp.setMyRank(entry.getRank());
+                            break;
+                        }
                     }
+                    long correct = submissionRepository.countByLiveSessionIdAndParticipantIdAndIsCorrectTrue(session.getId(), participant.getId());
+                    long incorrect = submissionRepository.countByLiveSessionIdAndParticipantIdAndIsCorrectFalse(session.getId(), participant.getId());
+                    resp.setTotalCorrect(correct);
+                    resp.setTotalIncorrect(incorrect);
                 }
-                long correct = submissionRepository.countByLiveSessionIdAndParticipantIdAndIsCorrectTrue(session.getId(), participant.getId());
-                long incorrect = submissionRepository.countByLiveSessionIdAndParticipantIdAndIsCorrectFalse(session.getId(), participant.getId());
-                resp.setTotalCorrect(correct);
-                resp.setTotalIncorrect(incorrect);
+            } else {
+                resp.setLeaderboard(Collections.emptyList());
+                if (participant != null) {
+                    resp.setMyRank(null);
+                    resp.setTotalCorrect(null);
+                    resp.setTotalIncorrect(null);
+                }
             }
         }
 

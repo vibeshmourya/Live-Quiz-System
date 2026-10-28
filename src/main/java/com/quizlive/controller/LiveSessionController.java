@@ -5,12 +5,14 @@ import com.quizlive.model.LiveSession;
 import com.quizlive.model.Participant;
 import com.quizlive.model.Submission;
 import com.quizlive.service.AuthService;
+import com.quizlive.service.IncidentService;
 import com.quizlive.service.LiveSessionService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -19,10 +21,16 @@ public class LiveSessionController {
 
     private final LiveSessionService liveSessionService;
     private final AuthService authService;
+    private final IncidentService incidentService;
 
-    public LiveSessionController(LiveSessionService liveSessionService, AuthService authService) {
+    public LiveSessionController(
+            LiveSessionService liveSessionService,
+            AuthService authService,
+            IncidentService incidentService
+    ) {
         this.liveSessionService = liveSessionService;
         this.authService = authService;
+        this.incidentService = incidentService;
     }
 
     @PostMapping("/create")
@@ -57,7 +65,38 @@ public class LiveSessionController {
                     "sessionPin", participant.getSessionPin(),
                     "candidateId", participant.getCandidateId(),
                     "nickname", participant.getNickname(),
-                    "score", participant.getScore()
+                    "score", participant.getScore(),
+                    "rulesAcknowledged", Boolean.TRUE.equals(participant.getRulesAcknowledged())
+            ));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/{pin}/participants")
+    public ResponseEntity<?> getParticipants(@PathVariable String pin) {
+        try {
+            List<ParticipantDto> participants = liveSessionService.getSessionParticipants(pin);
+            return ResponseEntity.ok(participants);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/{pin}/acknowledge-rules")
+    public ResponseEntity<?> acknowledgeRules(
+            @PathVariable String pin,
+            @RequestBody Map<String, String> payload
+    ) {
+        try {
+            String candidateId = payload.get("candidateId");
+            if (candidateId == null || candidateId.trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "candidateId is required"));
+            }
+            Participant participant = liveSessionService.acknowledgeRules(pin, candidateId);
+            return ResponseEntity.ok(Map.of(
+                    "candidateId", participant.getCandidateId(),
+                    "rulesAcknowledged", true
             ));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
@@ -146,6 +185,86 @@ public class LiveSessionController {
         try {
             SessionStateResponse response = liveSessionService.endQuiz(pin);
             return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // --- SECURE EXAMINATION INCIDENT MONITORING ENDPOINTS ---
+
+    @PostMapping("/{pin}/incidents")
+    public ResponseEntity<?> reportIncident(
+            @PathVariable String pin,
+            @Valid @RequestBody IncidentReportRequest request
+    ) {
+        try {
+            ExamIncidentDto incident = incidentService.reportIncident(pin, request);
+            return ResponseEntity.ok(incident);
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason()));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/{pin}/incidents")
+    public ResponseEntity<?> getIncidents(
+            @PathVariable String pin,
+            @RequestHeader(value = "Authorization", required = false) String authHeader
+    ) {
+        try {
+            authService.validateFaculty(authHeader);
+            List<ExamIncidentDto> incidents = incidentService.getIncidentsForSession(pin);
+            return ResponseEntity.ok(incidents);
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason()));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/{pin}/incidents/summary")
+    public ResponseEntity<?> getIncidentSummary(
+            @PathVariable String pin,
+            @RequestHeader(value = "Authorization", required = false) String authHeader
+    ) {
+        try {
+            authService.validateFaculty(authHeader);
+            Map<String, Object> summary = incidentService.getIncidentSummary(pin);
+            return ResponseEntity.ok(summary);
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason()));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PatchMapping("/{pin}/incidents/{incidentId}/review")
+    public ResponseEntity<?> reviewIncident(
+            @PathVariable String pin,
+            @PathVariable Long incidentId,
+            @Valid @RequestBody IncidentReviewRequest request,
+            @RequestHeader(value = "Authorization", required = false) String authHeader
+    ) {
+        try {
+            authService.validateFaculty(authHeader);
+            ExamIncidentDto updated = incidentService.reviewIncident(incidentId, request);
+            return ResponseEntity.ok(updated);
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason()));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/{pin}/incidents/my-count")
+    public ResponseEntity<?> getMyIncidentCount(
+            @PathVariable String pin,
+            @RequestParam String candidateId
+    ) {
+        try {
+            long count = incidentService.getIncidentCountForParticipant(pin, candidateId);
+            return ResponseEntity.ok(Map.of("incidentCount", count));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }

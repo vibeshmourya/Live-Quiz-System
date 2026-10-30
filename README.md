@@ -1,4 +1,4 @@
-# Quizora — Real-Time Online Quiz Platform & Examination System
+# Quizora - Real-Time Online Quiz Platform & Examination System
 
 Quizora is a real-time MCQ quiz and confidential college examination platform where faculty can conduct live quizzes and candidates join instantly using a QR code or shareable PIN link on their phones. Candidates answer questions in real time while the host monitors live response distributions through dynamically updating charts.
 

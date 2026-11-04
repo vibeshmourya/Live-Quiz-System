@@ -30,6 +30,16 @@ public class GlobalExceptionHandler {
         return new ResponseEntity<>(body, ex.getStatusCode());
     }
 
+    @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class})
+    public ResponseEntity<Map<String, Object>> handleBadRequestExceptions(Exception ex) {
+        Map<String, Object> body = new HashMap<>();
+        String message = ex.getMessage() != null ? ex.getMessage() : "Bad request";
+        body.put("error", message);
+        body.put("message", message);
+        body.put("status", HttpStatus.BAD_REQUEST.value());
+        return new ResponseEntity<>(body, HttpStatus.BAD_REQUEST);
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidationExceptions(MethodArgumentNotValidException ex) {
         Map<String, Object> body = new HashMap<>();

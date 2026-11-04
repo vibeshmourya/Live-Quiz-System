@@ -5,27 +5,47 @@ import com.quizlive.dto.QuestionDto;
 import com.quizlive.dto.QuizDto;
 import com.quizlive.model.AnswerOption;
 import com.quizlive.model.ExamStatus;
+import com.quizlive.model.LiveSession;
 import com.quizlive.model.Question;
 import com.quizlive.model.Quiz;
+import com.quizlive.repository.ExamIncidentRepository;
+import com.quizlive.repository.LiveSessionRepository;
+import com.quizlive.repository.ParticipantRepository;
 import com.quizlive.repository.QuestionRepository;
 import com.quizlive.repository.QuizRepository;
+import com.quizlive.repository.SubmissionRepository;
 import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class QuizService {
 
     private final QuizRepository quizRepository;
     private final QuestionRepository questionRepository;
+    private final LiveSessionRepository liveSessionRepository;
+    private final SubmissionRepository submissionRepository;
+    private final ParticipantRepository participantRepository;
+    private final ExamIncidentRepository examIncidentRepository;
 
-    public QuizService(QuizRepository quizRepository, QuestionRepository questionRepository) {
+    public QuizService(
+            QuizRepository quizRepository,
+            QuestionRepository questionRepository,
+            LiveSessionRepository liveSessionRepository,
+            SubmissionRepository submissionRepository,
+            ParticipantRepository participantRepository,
+            ExamIncidentRepository examIncidentRepository
+    ) {
         this.quizRepository = quizRepository;
         this.questionRepository = questionRepository;
+        this.liveSessionRepository = liveSessionRepository;
+        this.submissionRepository = submissionRepository;
+        this.participantRepository = participantRepository;
+        this.examIncidentRepository = examIncidentRepository;
     }
 
     @Transactional(readOnly = true)
@@ -111,36 +131,90 @@ public class QuizService {
             quiz.setUpdatedAt(LocalDateTime.now());
         }
 
-        // Rebuild questions safely
-        quiz.getQuestions().clear();
+        // Safe in-place update of questions and answer options
+        List<Question> existingQuestions = quiz.getQuestions();
+        Set<Long> incomingQuestionIds = dto.getQuestions() != null
+                ? dto.getQuestions().stream().map(QuestionDto::getId).filter(Objects::nonNull).collect(Collectors.toSet())
+                : Collections.emptySet();
 
+        // 1. Check for removed questions
+        for (Question existingQ : new ArrayList<>(existingQuestions)) {
+            if (existingQ.getId() != null && !incomingQuestionIds.contains(existingQ.getId())) {
+                boolean hasSubmissions = submissionRepository.existsByQuestionId(existingQ.getId());
+                if (hasSubmissions) {
+                    throw new IllegalStateException("Cannot remove question '" + existingQ.getQuestionText()
+                            + "' because historical student submissions reference it.");
+                }
+                quiz.removeQuestion(existingQ);
+            }
+        }
+
+        // 2. Insert or update incoming questions
         if (dto.getQuestions() != null && !dto.getQuestions().isEmpty()) {
             int order = 0;
             for (QuestionDto qDto : dto.getQuestions()) {
-                Question question = new Question();
+                Question question = null;
+                if (qDto.getId() != null) {
+                    question = existingQuestions.stream()
+                            .filter(q -> qDto.getId().equals(q.getId()))
+                            .findFirst()
+                            .orElse(null);
+                }
+
+                if (question == null) {
+                    question = new Question();
+                    quiz.addQuestion(question);
+                }
+
                 question.setQuestionText(qDto.getQuestionText() != null ? qDto.getQuestionText().trim() : "");
                 question.setTimeLimit(qDto.getTimeLimit() != null && qDto.getTimeLimit() > 0 ? qDto.getTimeLimit() : 20);
                 question.setMarks(qDto.getMarks() != null && qDto.getMarks() > 0 ? qDto.getMarks() : 10);
                 question.setOrderIndex(order++);
 
-                List<AnswerOptionDto> options = qDto.getOptions();
-                if (options != null) {
-                    for (int i = 0; i < options.size(); i++) {
-                        AnswerOptionDto optDto = options.get(i);
+                // Update options for this question
+                List<AnswerOption> existingOptions = question.getOptions();
+                Set<Long> incomingOptionIds = qDto.getOptions() != null
+                        ? qDto.getOptions().stream().map(AnswerOptionDto::getId).filter(Objects::nonNull).collect(Collectors.toSet())
+                        : Collections.emptySet();
+
+                // Remove obsolete options only if not referenced by historical submissions
+                for (AnswerOption existingOpt : new ArrayList<>(existingOptions)) {
+                    if (existingOpt.getId() != null && !incomingOptionIds.contains(existingOpt.getId())) {
+                        boolean hasSubmissions = submissionRepository.existsBySelectedOptionId(existingOpt.getId());
+                        if (!hasSubmissions) {
+                            question.removeOption(existingOpt);
+                        }
+                    }
+                }
+
+                if (qDto.getOptions() != null) {
+                    for (int i = 0; i < qDto.getOptions().size(); i++) {
+                        AnswerOptionDto optDto = qDto.getOptions().get(i);
                         String label = optDto.getOptionLabel() != null && !optDto.getOptionLabel().isEmpty()
                                 ? optDto.getOptionLabel().trim().toUpperCase()
                                 : String.valueOf((char) ('A' + i));
 
                         boolean correct = Boolean.TRUE.equals(optDto.getIsCorrect());
-                        AnswerOption option = new AnswerOption(
-                                label,
-                                optDto.getOptionText() != null ? optDto.getOptionText().trim() : "",
-                                correct
-                        );
-                        question.addOption(option);
+                        String text = optDto.getOptionText() != null ? optDto.getOptionText().trim() : "";
+
+                        AnswerOption option = null;
+                        if (optDto.getId() != null) {
+                            option = existingOptions.stream()
+                                    .filter(o -> optDto.getId().equals(o.getId()))
+                                    .findFirst()
+                                    .orElse(null);
+                        }
+
+                        if (option != null) {
+                            option.setOptionLabel(label);
+                            option.setOptionText(text);
+                            option.setIsCorrect(correct);
+                        } else {
+                            AnswerOption newOpt = new AnswerOption(label, text, correct);
+                            question.addOption(newOpt);
+                        }
                     }
                 }
-                quiz.addQuestion(question);
             }
         }
 
@@ -305,6 +379,21 @@ public class QuizService {
         if (quiz.getExamStatus() == ExamStatus.LIVE) {
             throw new IllegalStateException("Cannot delete an examination that is currently LIVE");
         }
+
+        List<LiveSession> sessions = liveSessionRepository.findByQuizId(quizId);
+        boolean hasSubmissions = submissionRepository.existsByLiveSessionQuizId(quizId);
+        boolean hasParticipants = participantRepository.existsByLiveSessionQuizId(quizId);
+        boolean hasIncidents = examIncidentRepository.existsByLiveSessionQuizId(quizId);
+
+        if (hasSubmissions || hasParticipants || hasIncidents) {
+            throw new IllegalStateException("Cannot delete this examination because it contains historical examination records and student submissions. Preserving student performance data is required for academic integrity.");
+        }
+
+        // Clean up empty/abandoned session shells with no student activity
+        if (!sessions.isEmpty()) {
+            liveSessionRepository.deleteAll(sessions);
+        }
+
         quizRepository.delete(quiz);
     }
 

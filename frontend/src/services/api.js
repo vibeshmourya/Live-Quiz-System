@@ -37,6 +37,9 @@ function getHeaders(isJson = true) {
   if (isJson) {
     headers['Content-Type'] = 'application/json';
   }
+  if (API_BASE.includes('ngrok')) {
+    headers['ngrok-skip-browser-warning'] = 'true';
+  }
   const token = getFacultyToken();
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -44,7 +47,21 @@ function getHeaders(isJson = true) {
   return headers;
 }
 
+function getCandidateHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
+  if (API_BASE.includes('ngrok')) {
+    headers['ngrok-skip-browser-warning'] = 'true';
+  }
+  return headers;
+}
+
 async function parseErrorResponse(res, defaultMsg) {
+  if (res.status === 401) {
+    clearFacultySession();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('quizora:unauthorized'));
+    }
+  }
   try {
     const contentType = res.headers.get('content-type') || '';
     if (contentType.includes('application/json')) {
@@ -376,7 +393,7 @@ export async function joinSession({ sessionPin, nickname, candidateId }) {
   try {
     res = await fetch(`${API_BASE}/sessions/join`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getCandidateHeaders(),
       body: JSON.stringify({ sessionPin, nickname, candidateId }),
     });
   } catch (err) {
@@ -408,7 +425,9 @@ export async function getHostState(pin) {
 export async function getCandidateState(pin, candidateId) {
   let res;
   try {
-    res = await fetch(`${API_BASE}/sessions/${pin}/candidate?candidateId=${encodeURIComponent(candidateId || '')}`);
+    res = await fetch(`${API_BASE}/sessions/${pin}/candidate?candidateId=${encodeURIComponent(candidateId || '')}`, {
+      headers: API_BASE.includes('ngrok') ? { 'ngrok-skip-browser-warning': 'true' } : {},
+    });
   } catch (err) {
     throw handleNetworkError(err, 'fetching candidate state');
   }
@@ -440,7 +459,7 @@ export async function acknowledgeRules(pin, candidateId) {
   try {
     res = await fetch(`${API_BASE}/sessions/${pin}/acknowledge-rules`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getCandidateHeaders(),
       body: JSON.stringify({ candidateId }),
     });
   } catch (err) {
@@ -476,7 +495,7 @@ export async function submitAnswer({ sessionPin, candidateId, questionId, option
   try {
     res = await fetch(`${API_BASE}/sessions/${sessionPin}/submit`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getCandidateHeaders(),
       body: JSON.stringify({ sessionPin, candidateId, questionId, optionLabel }),
     });
   } catch (err) {
@@ -506,18 +525,37 @@ export async function revealAnswer(pin) {
   return res.json();
 }
 
-export async function nextQuestion(pin) {
+export async function nextQuestion(pin, expectedCurrentIndex = null) {
   let res;
   try {
     res = await fetch(`${API_BASE}/sessions/${pin}/next`, {
       method: 'POST',
-      headers: getHeaders(false),
+      headers: getHeaders(),
+      body: expectedCurrentIndex !== null ? JSON.stringify({ expectedCurrentIndex }) : undefined,
     });
   } catch (err) {
     throw handleNetworkError(err, 'advancing question');
   }
   if (!res.ok) {
     const errMsg = await parseErrorResponse(res, 'Failed to advance question');
+    throw new Error(errMsg);
+  }
+  return res.json();
+}
+
+export async function previousQuestion(pin, expectedCurrentIndex = null) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/sessions/${pin}/previous`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: expectedCurrentIndex !== null ? JSON.stringify({ expectedCurrentIndex }) : undefined,
+    });
+  } catch (err) {
+    throw handleNetworkError(err, 'returning to previous question');
+  }
+  if (!res.ok) {
+    const errMsg = await parseErrorResponse(res, 'Failed to return to previous question');
     throw new Error(errMsg);
   }
   return res.json();
@@ -545,7 +583,7 @@ export async function reportIncident(pin, { candidateId, eventType, incidentDeta
   try {
     res = await fetch(`${API_BASE}/sessions/${pin}/incidents`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getCandidateHeaders(),
       body: JSON.stringify({ candidateId, eventType, incidentDetails }),
     });
   } catch (err) {

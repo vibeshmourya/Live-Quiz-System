@@ -9,4 +9,6 @@ import java.util.Optional;
 public interface LiveSessionRepository extends JpaRepository<LiveSession, Long> {
     Optional<LiveSession> findByPin(String pin);
     boolean existsByPin(String pin);
+    java.util.List<LiveSession> findByQuizId(Long quizId);
+    long countByQuizId(Long quizId);
 }

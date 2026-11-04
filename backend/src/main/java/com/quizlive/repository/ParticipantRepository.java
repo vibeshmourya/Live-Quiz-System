@@ -12,4 +12,6 @@ public interface ParticipantRepository extends JpaRepository<Participant, Long> 
     List<Participant> findBySessionPinOrderByScoreDesc(String sessionPin);
     Optional<Participant> findBySessionPinAndCandidateId(String sessionPin, String candidateId);
     long countBySessionPin(String sessionPin);
+    long countByLiveSessionQuizId(Long quizId);
+    boolean existsByLiveSessionQuizId(Long quizId);
 }

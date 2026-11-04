@@ -14,6 +14,9 @@ export default function CandidateQuizPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedLabel, setSelectedLabel] = useState(null);
+  const selectedLabelRef = useRef(selectedLabel);
+  selectedLabelRef.current = selectedLabel;
+  const answersMapRef = useRef({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [timerRemaining, setTimerRemaining] = useState(0);
 
@@ -60,7 +63,10 @@ export default function CandidateQuizPage({
       if (data.myIncidentCount !== undefined) {
         setIncidentCount(data.myIncidentCount);
       }
-      if (data.hasSubmitted) {
+      if (data.hasSubmitted && data.mySelectedLabel) {
+        if (data.currentQuestion?.id) {
+          answersMapRef.current[data.currentQuestion.id] = data.mySelectedLabel;
+        }
         setSelectedLabel(data.mySelectedLabel);
       }
       if (data.status === 'FINISHED') {
@@ -197,65 +203,83 @@ export default function CandidateQuizPage({
 
   // WebSocket real-time updates
   useEffect(() => {
-    const unsubscribe = connectSessionWebSocket(pin, (event) => {
-      if (event.type === 'QUESTION_STARTED') {
-        setSelectedLabel(null);
-        setState((prev) =>
-          prev
-            ? {
-                ...prev,
-                status: 'QUESTION_ACTIVE',
-                currentQuestionIndex: event.payload.questionIndex,
-                totalQuestions: event.payload.totalQuestions,
-                currentQuestion: event.payload.question,
-                questionStartedAtEpochMs: event.payload.startedAt,
-                questionEndsAtEpochMs: event.payload.endsAt,
-                allowReselection: Boolean(event.payload.allowReselection),
-                requireFullscreen: event.payload.requireFullscreen !== undefined ? Boolean(event.payload.requireFullscreen) : prev.requireFullscreen,
-                monitorTabSwitch: event.payload.monitorTabSwitch !== undefined ? Boolean(event.payload.monitorTabSwitch) : prev.monitorTabSwitch,
-                restrictCopyPaste: event.payload.restrictCopyPaste !== undefined ? Boolean(event.payload.restrictCopyPaste) : prev.restrictCopyPaste,
-                hasSubmitted: false,
-                mySelectedLabel: null,
-                revealedCorrectLabel: null,
-                wasCorrect: null,
-              }
-            : prev
-        );
-        loadCandidateState();
-      } else if (event.type === 'QUESTION_REVEALED') {
-        setState((prev) =>
-          prev
-            ? {
-                ...prev,
-                status: 'QUESTION_REVEALED',
-                revealedCorrectLabel: event.payload.correctOptionLabel,
-                wasCorrect: selectedLabel === event.payload.correctOptionLabel,
-              }
-            : prev
-        );
-      } else if (event.type === 'PARTICIPANT_JOINED') {
-        if (event.payload.participants && Array.isArray(event.payload.participants)) {
-          setParticipants(event.payload.participants);
-        } else {
-          loadParticipants();
+    const unsubscribe = connectSessionWebSocket(
+      pin,
+      (event) => {
+        if (event.type === 'QUESTION_STARTED') {
+          const payload = event.payload;
+          const qId = payload.question?.id;
+          const previousAnswer = qId ? answersMapRef.current[qId] : null;
+
+          setState((prev) => {
+            if (!prev) return prev;
+            // Guard: drop stale question events
+            if (payload.questionIndex !== undefined && prev.currentQuestionIndex > payload.questionIndex) {
+              return prev;
+            }
+            return {
+              ...prev,
+              status: 'QUESTION_ACTIVE',
+              currentQuestionIndex: payload.questionIndex,
+              totalQuestions: payload.totalQuestions,
+              currentQuestion: payload.question,
+              questionStartedAtEpochMs: payload.startedAt,
+              questionEndsAtEpochMs: payload.endsAt,
+              allowReselection: Boolean(payload.allowReselection),
+              requireFullscreen: payload.requireFullscreen !== undefined ? Boolean(payload.requireFullscreen) : prev.requireFullscreen,
+              monitorTabSwitch: payload.monitorTabSwitch !== undefined ? Boolean(payload.monitorTabSwitch) : prev.monitorTabSwitch,
+              restrictCopyPaste: payload.restrictCopyPaste !== undefined ? Boolean(payload.restrictCopyPaste) : prev.restrictCopyPaste,
+              warningThreshold: payload.warningThreshold !== undefined ? payload.warningThreshold : prev.warningThreshold,
+              hasSubmitted: Boolean(previousAnswer),
+              mySelectedLabel: previousAnswer || null,
+              revealedCorrectLabel: null,
+              wasCorrect: null,
+            };
+          });
+          setSelectedLabel(previousAnswer || null);
+        } else if (event.type === 'QUESTION_REVEALED') {
+          const payload = event.payload;
+          setState((prev) => {
+            if (!prev) return prev;
+            if (payload.questionIndex !== undefined && payload.questionIndex < prev.currentQuestionIndex) {
+              return prev; // guard against stale older question reveal
+            }
+            const activeChoice = selectedLabelRef.current || prev.mySelectedLabel || (prev.currentQuestion?.id ? answersMapRef.current[prev.currentQuestion.id] : null);
+            return {
+              ...prev,
+              status: 'QUESTION_REVEALED',
+              revealedCorrectLabel: payload.correctOptionLabel,
+              wasCorrect: Boolean(activeChoice && activeChoice === payload.correctOptionLabel),
+            };
+          });
+        } else if (event.type === 'PARTICIPANT_JOINED') {
+          if (event.payload.participants && Array.isArray(event.payload.participants)) {
+            setParticipants(event.payload.participants);
+          }
+        } else if (event.type === 'RULES_ACKNOWLEDGED') {
+          setParticipants((prev) =>
+            prev.map((p) =>
+              p.candidateId === event.payload.candidateId
+                ? { ...p, rulesAcknowledged: true }
+                : p
+            )
+          );
+        } else if (event.type === 'SESSION_FINISHED') {
+          loadCandidateState();
         }
-      } else if (event.type === 'RULES_ACKNOWLEDGED') {
-        setParticipants((prev) =>
-          prev.map((p) =>
-            p.candidateId === event.payload.candidateId
-              ? { ...p, rulesAcknowledged: true }
-              : p
-          )
-        );
-      } else if (event.type === 'SESSION_FINISHED') {
+      },
+      null, // candidates do not subscribe to high-frequency stats
+      null, // candidates do not subscribe to host topic
+      // onReconnect: sync state when connection is restored
+      () => {
         loadCandidateState();
       }
-    });
+    );
 
     return () => {
       unsubscribe();
     };
-  }, [pin, selectedLabel]);
+  }, [pin]);
 
   // Synchronized countdown timer
   useEffect(() => {
@@ -302,6 +326,10 @@ export default function CandidateQuizPage({
         questionId: state.currentQuestion.id,
         optionLabel: label,
       });
+
+      if (state.currentQuestion?.id) {
+        answersMapRef.current[state.currentQuestion.id] = label;
+      }
 
       setState((prev) => ({
         ...prev,

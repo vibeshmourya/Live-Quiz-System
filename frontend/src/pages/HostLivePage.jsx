@@ -13,6 +13,7 @@ import {
   startQuestion,
   revealAnswer,
   nextQuestion,
+  previousQuestion,
   endQuiz,
   getSessionIncidents,
   reviewIncident,
@@ -101,17 +102,11 @@ export default function HostLivePage({ pin, onEndQuiz, onNavigate }) {
           );
           if (event.payload.participants) {
             setParticipants(event.payload.participants);
-          } else {
-            loadParticipants();
           }
         } else if (event.type === 'RULES_ACKNOWLEDGED') {
           if (event.payload.participants) {
             setParticipants(event.payload.participants);
-          } else {
-            loadParticipants();
           }
-        } else if (event.type === 'QUESTION_STARTED') {
-          loadState();
         } else if (event.type === 'QUESTION_REVEALED') {
           setState((prev) =>
             prev
@@ -151,6 +146,24 @@ export default function HostLivePage({ pin, onEndQuiz, onNavigate }) {
               : prev
           );
         }
+      },
+      // onHostEvent (authoritative host state updates)
+      (hostMsg) => {
+        if (hostMsg.type === 'HOST_STATE_CHANGED' && hostMsg.payload) {
+          const incoming = hostMsg.payload;
+          setState((prev) => {
+            if (!prev) return incoming;
+            if (incoming.currentQuestionIndex < prev.currentQuestionIndex) {
+              return prev; // guard against stale older question events
+            }
+            return incoming;
+          });
+        }
+      },
+      // onReconnect (recover latest state after connection interruption)
+      () => {
+        loadState();
+        loadParticipants();
       }
     );
 
@@ -219,7 +232,7 @@ export default function HostLivePage({ pin, onEndQuiz, onNavigate }) {
     setActionMessage('Advancing to next examination question...');
     setError('');
     try {
-      const updated = await nextQuestion(pin);
+      const updated = await nextQuestion(pin, state?.currentQuestionIndex);
       setState(updated);
       setActionMessage('');
       if (updated.status === 'FINISHED') {
@@ -227,6 +240,22 @@ export default function HostLivePage({ pin, onEndQuiz, onNavigate }) {
       }
     } catch (err) {
       setError(err.message || 'Failed to move to next question');
+    } finally {
+      setIsProcessingAction(false);
+    }
+  }
+
+  async function handlePreviousQuestion() {
+    if (isProcessingAction || !state || state.currentQuestionIndex <= 0) return;
+    setIsProcessingAction(true);
+    setActionMessage('Returning to previous examination question...');
+    setError('');
+    try {
+      const updated = await previousQuestion(pin, state.currentQuestionIndex);
+      setState(updated);
+      setActionMessage('');
+    } catch (err) {
+      setError(err.message || 'Failed to return to previous question');
     } finally {
       setIsProcessingAction(false);
     }
@@ -744,6 +773,21 @@ export default function HostLivePage({ pin, onEndQuiz, onNavigate }) {
         </div>
 
         <div className="flex items-center gap-3">
+          {state?.currentQuestionIndex > 0 && (
+            <button
+              id="host-prev-question-btn"
+              type="button"
+              onClick={handlePreviousQuestion}
+              disabled={isProcessingAction}
+              className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm rounded-lg shadow-2xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+            >
+              {isProcessingAction && actionMessage.includes('Returning') && (
+                <span className="inline-block w-3.5 h-3.5 border-2 border-slate-600 border-t-transparent rounded-full animate-spin"></span>
+              )}
+              <span>← Previous</span>
+            </button>
+          )}
+
           {!isRevealed ? (
             <button
               id="host-reveal-btn"

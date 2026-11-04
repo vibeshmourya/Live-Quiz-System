@@ -23,4 +23,7 @@ public interface ExamIncidentRepository extends JpaRepository<ExamIncident, Long
 
     Optional<ExamIncident> findFirstByLiveSessionIdAndParticipantIdAndEventTypeOrderByServerTimestampDesc(
             Long liveSessionId, Long participantId, IncidentType eventType);
+
+    long countByLiveSessionQuizId(Long quizId);
+    boolean existsByLiveSessionQuizId(Long quizId);
 }

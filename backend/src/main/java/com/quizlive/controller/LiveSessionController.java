@@ -171,9 +171,31 @@ public class LiveSessionController {
     }
 
     @PostMapping("/{pin}/next")
-    public ResponseEntity<?> advanceOrEnd(@PathVariable String pin) {
+    public ResponseEntity<?> advanceOrEnd(
+            @PathVariable String pin,
+            @RequestBody(required = false) Map<String, Integer> payload
+    ) {
         try {
-            SessionStateResponse response = liveSessionService.advanceOrEnd(pin);
+            Integer expectedCurrentIndex = (payload != null && payload.containsKey("expectedCurrentIndex"))
+                    ? payload.get("expectedCurrentIndex")
+                    : null;
+            SessionStateResponse response = liveSessionService.advanceOrEnd(pin, expectedCurrentIndex);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/{pin}/previous")
+    public ResponseEntity<?> previousQuestion(
+            @PathVariable String pin,
+            @RequestBody(required = false) Map<String, Integer> payload
+    ) {
+        try {
+            Integer expectedCurrentIndex = (payload != null && payload.containsKey("expectedCurrentIndex"))
+                    ? payload.get("expectedCurrentIndex")
+                    : null;
+            SessionStateResponse response = liveSessionService.previousQuestion(pin, expectedCurrentIndex);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));

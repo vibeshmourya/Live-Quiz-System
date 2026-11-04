@@ -7,7 +7,7 @@ import HostLivePage from './pages/HostLivePage';
 import CandidateQuizPage from './pages/CandidateQuizPage';
 import ResultsPage from './pages/ResultsPage';
 import FacultyLoginModal from './components/FacultyLoginModal';
-import { getFacultyUser, logoutFaculty } from './services/api';
+import { getFacultyUser, logoutFaculty, checkFacultySession } from './services/api';
 
 export default function App() {
   const [screen, setScreen] = useState('home');
@@ -18,7 +18,28 @@ export default function App() {
   const [facultyUser, setFacultyUser] = useState(getFacultyUser());
   const [showLoginModal, setShowLoginModal] = useState(false);
 
-  // Parse URL on initial load for deep join links (e.g. /join?pin=123456)
+  // Validate faculty session on mount and listen for authorization invalidation
+  useEffect(() => {
+    async function verifyAuth() {
+      if (facultyUser) {
+        const verified = await checkFacultySession();
+        if (verified) {
+          setFacultyUser(verified);
+        } else {
+          setFacultyUser(null);
+        }
+      }
+    }
+    verifyAuth();
+
+    function handleUnauthorized() {
+      setFacultyUser(null);
+    }
+    window.addEventListener('quizora:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('quizora:unauthorized', handleUnauthorized);
+  }, []);
+
+  // Parse URL on initial load for deep join links (e.g. /join?pin=123456) or recover active session
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const pinFromUrl = params.get('pin');
@@ -27,6 +48,30 @@ export default function App() {
     if (pinFromUrl || path === '/join') {
       setActivePin(pinFromUrl || '');
       setScreen('join');
+      return;
+    }
+
+    try {
+      const savedCandidate = sessionStorage.getItem('quizora_candidate_session');
+      if (savedCandidate) {
+        const parsed = JSON.parse(savedCandidate);
+        if (parsed && parsed.pin && parsed.candidateId) {
+          setActivePin(parsed.pin);
+          setCandidateInfo(parsed);
+          setIsHost(false);
+          setScreen('candidate_quiz');
+          return;
+        }
+      }
+
+      const savedHostPin = sessionStorage.getItem('quizora_host_pin');
+      if (savedHostPin && facultyUser) {
+        setActivePin(savedHostPin);
+        setIsHost(true);
+        setScreen('host_live');
+      }
+    } catch (e) {
+      // ignore
     }
   }, []);
 
@@ -36,6 +81,10 @@ export default function App() {
       setCandidateInfo(null);
       setFinalResults(null);
       setIsHost(false);
+      try {
+        sessionStorage.removeItem('quizora_candidate_session');
+        sessionStorage.removeItem('quizora_host_pin');
+      } catch (e) {}
       window.history.replaceState({}, '', '/');
       setScreen('home');
       return;
@@ -60,12 +109,18 @@ export default function App() {
   async function handleFacultyLogout() {
     await logoutFaculty();
     setFacultyUser(null);
+    try {
+      sessionStorage.removeItem('quizora_host_pin');
+    } catch (e) {}
     handleNavigate('home');
   }
 
   function handleSessionCreated(pin) {
     setActivePin(pin);
     setIsHost(true);
+    try {
+      sessionStorage.setItem('quizora_host_pin', pin);
+    } catch (e) {}
     setScreen('host_live');
   }
 
@@ -73,10 +128,17 @@ export default function App() {
     setActivePin(info.pin);
     setCandidateInfo(info);
     setIsHost(false);
+    try {
+      sessionStorage.setItem('quizora_candidate_session', JSON.stringify(info));
+    } catch (e) {}
     setScreen('candidate_quiz');
   }
 
   function handleQuizFinished(results) {
+    try {
+      sessionStorage.removeItem('quizora_candidate_session');
+      sessionStorage.removeItem('quizora_host_pin');
+    } catch (e) {}
     setFinalResults(results);
     setScreen('results');
   }

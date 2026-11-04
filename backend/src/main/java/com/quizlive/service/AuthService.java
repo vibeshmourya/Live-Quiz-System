@@ -6,12 +6,19 @@ import com.quizlive.model.Faculty;
 import com.quizlive.repository.FacultyRepository;
 import com.quizlive.util.PasswordUtil;
 import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Base64;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -20,6 +27,11 @@ public class AuthService {
 
     private final FacultyRepository facultyRepository;
     private final Map<String, FacultySession> activeSessions = new ConcurrentHashMap<>();
+    private final Set<String> revokedTokens = ConcurrentHashMap.newKeySet();
+    private static final long MAX_SESSION_AGE_MS = 24 * 60 * 60 * 1000L; // 24 hours
+
+    @Value("${quizora.auth.secret:quizora-secure-hmac-secret-key-stable-token-key-256}")
+    private String authSecret;
 
     public AuthService(FacultyRepository facultyRepository) {
         this.facultyRepository = facultyRepository;
@@ -30,8 +42,12 @@ public class AuthService {
         private final long createdAtEpochMs;
 
         public FacultySession(Faculty faculty) {
+            this(faculty, System.currentTimeMillis());
+        }
+
+        public FacultySession(Faculty faculty, long createdAtEpochMs) {
             this.faculty = faculty;
-            this.createdAtEpochMs = System.currentTimeMillis();
+            this.createdAtEpochMs = createdAtEpochMs;
         }
 
         public Faculty getFaculty() {
@@ -43,14 +59,40 @@ public class AuthService {
         }
     }
 
+    private String computeHmac(String data) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            byte[] secretBytes = (authSecret != null ? authSecret : "quizora-secure-hmac-secret-key-stable-token-key-256")
+                    .getBytes(StandardCharsets.UTF_8);
+            mac.init(new SecretKeySpec(secretBytes, "HmacSHA256"));
+            byte[] rawHmac = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(rawHmac);
+        } catch (Exception e) {
+            throw new RuntimeException("Error computing token signature", e);
+        }
+    }
+
+    private String issueToken(Faculty faculty) {
+        long now = System.currentTimeMillis();
+        String nonce = UUID.randomUUID().toString().replace("-", "");
+        String payload = faculty.getUsername() + ":" + now + ":" + nonce;
+        String sig = computeHmac(payload);
+        String rawToken = payload + ":" + sig;
+        String token = Base64.getUrlEncoder().withoutPadding().encodeToString(rawToken.getBytes(StandardCharsets.UTF_8));
+        activeSessions.put(token, new FacultySession(faculty, now));
+        return token;
+    }
+
     @Transactional
     public LoginResponse login(LoginRequest request) {
-        String identifier = request.getIdentifier();
+        String identifier = request.getIdentifier() != null ? request.getIdentifier().trim() : "";
         if (identifier.isEmpty() || request.getPassword() == null || request.getPassword().isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email/username and password are required");
         }
 
-        Faculty faculty = facultyRepository.findByUsernameOrEmail(identifier, identifier)
+        Faculty faculty = facultyRepository.findByUsername(identifier)
+                .or(() -> facultyRepository.findByEmail(identifier.toLowerCase()))
+                .or(() -> facultyRepository.findByUsernameOrEmail(identifier, identifier))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials"));
 
         boolean matches = PasswordUtil.verifyPassword(request.getPassword(), faculty.getPasswordHash());
@@ -58,9 +100,7 @@ public class AuthService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid credentials");
         }
 
-        String token = UUID.randomUUID().toString().replace("-", "") + System.currentTimeMillis();
-        activeSessions.put(token, new FacultySession(faculty));
-
+        String token = issueToken(faculty);
         return new LoginResponse(token, faculty.getUsername(), faculty.getEmail(), faculty.getName(), faculty.getRole());
     }
 
@@ -95,9 +135,7 @@ public class AuthService {
         Faculty faculty = new Faculty(username, email, passwordHash, request.getName().trim());
         faculty = facultyRepository.save(faculty);
 
-        String token = UUID.randomUUID().toString().replace("-", "") + System.currentTimeMillis();
-        activeSessions.put(token, new FacultySession(faculty));
-
+        String token = issueToken(faculty);
         return new LoginResponse(token, faculty.getUsername(), faculty.getEmail(), faculty.getName(), faculty.getRole());
     }
 
@@ -105,6 +143,7 @@ public class AuthService {
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7).trim();
             activeSessions.remove(token);
+            revokedTokens.add(token);
         }
     }
 
@@ -113,26 +152,72 @@ public class AuthService {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication token required for faculty operations");
         }
         String token = authHeader.substring(7).trim();
-        FacultySession session = activeSessions.get(token);
-        if (session == null) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or expired faculty session");
+
+        if (revokedTokens.contains(token)) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Faculty session has been logged out. Please sign in again.");
         }
-        // Optional session expiration (e.g. 24 hours)
-        long maxAge = 24 * 60 * 60 * 1000L;
-        if (System.currentTimeMillis() - session.getCreatedAtEpochMs() > maxAge) {
-            activeSessions.remove(token);
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Faculty session has expired. Please log in again.");
+
+        // 1. Check in-memory cache
+        FacultySession cachedSession = activeSessions.get(token);
+        long now = System.currentTimeMillis();
+        if (cachedSession != null) {
+            if (now - cachedSession.getCreatedAtEpochMs() > MAX_SESSION_AGE_MS) {
+                activeSessions.remove(token);
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Faculty session has expired. Please log in again.");
+            }
+            return cachedSession.getFaculty();
         }
-        return session.getFaculty();
+
+        // 2. Validate cryptographic stateless token (resilient across server restarts)
+        try {
+            byte[] decoded = Base64.getUrlDecoder().decode(token);
+            String raw = new String(decoded, StandardCharsets.UTF_8);
+            String[] parts = raw.split(":");
+            if (parts.length == 4) {
+                String username = parts[0];
+                long createdAtEpochMs = Long.parseLong(parts[1]);
+                String nonce = parts[2];
+                String signature = parts[3];
+
+                if (now - createdAtEpochMs > MAX_SESSION_AGE_MS) {
+                    throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Faculty session has expired. Please log in again.");
+                }
+
+                String expectedSig = computeHmac(username + ":" + createdAtEpochMs + ":" + nonce);
+                if (!MessageDigest.isEqual(expectedSig.getBytes(StandardCharsets.UTF_8), signature.getBytes(StandardCharsets.UTF_8))) {
+                    throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid authentication token signature");
+                }
+
+                Faculty faculty = facultyRepository.findByUsername(username)
+                        .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Faculty user no longer exists"));
+
+                // Restore to in-memory active sessions
+                activeSessions.put(token, new FacultySession(faculty, createdAtEpochMs));
+                return faculty;
+            }
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (Exception ignored) {
+            // Token is malformed or not an HMAC token
+        }
+
+        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid or expired faculty session");
     }
 
     public Faculty getFacultyOptional(String authHeader) {
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             return null;
         }
-        String token = authHeader.substring(7).trim();
-        FacultySession session = activeSessions.get(token);
-        return session != null ? session.getFaculty() : null;
+        try {
+            return validateFaculty(authHeader);
+        } catch (ResponseStatusException e) {
+            return null;
+        }
+    }
+
+    // Visible for testing simulated application restart
+    public void clearActiveSessionsCacheForTesting() {
+        activeSessions.clear();
     }
 
     @PostConstruct

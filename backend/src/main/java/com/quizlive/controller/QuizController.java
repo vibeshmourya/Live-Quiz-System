@@ -69,10 +69,10 @@ public class QuizController {
             Faculty faculty = authService.validateFaculty(authHeader);
             QuizDto saved = quizService.saveOrUpdateDraft(dto, faculty.getUsername());
             return ResponseEntity.status(HttpStatus.CREATED).body(saved);
-        } catch (IllegalArgumentException e) {
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason()));
+        } catch (IllegalArgumentException | IllegalStateException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", e.getMessage()));
         }
     }
 
@@ -86,10 +86,10 @@ public class QuizController {
             dto.setExamStatus(ExamStatus.DRAFT);
             QuizDto saved = quizService.saveOrUpdateDraft(dto, faculty.getUsername());
             return ResponseEntity.ok(saved);
-        } catch (IllegalArgumentException e) {
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason()));
+        } catch (IllegalArgumentException | IllegalStateException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", e.getMessage()));
         }
     }
 
@@ -104,10 +104,10 @@ public class QuizController {
             dto.setId(id);
             QuizDto saved = quizService.saveOrUpdateDraft(dto, faculty.getUsername());
             return ResponseEntity.ok(saved);
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason()));
         } catch (IllegalArgumentException | IllegalStateException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", e.getMessage()));
         }
     }
 
@@ -221,6 +221,10 @@ public class QuizController {
             authService.validateFaculty(authHeader);
             quizService.deleteQuiz(id);
             return ResponseEntity.ok(Map.of("success", true, "deletedId", id));
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason()));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }

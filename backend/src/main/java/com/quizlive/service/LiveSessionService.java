@@ -155,45 +155,54 @@ public class LiveSessionService {
 
     @Transactional
     public SessionStateResponse startQuestion(String pin, int questionIndex) {
-        LiveSession session = liveSessionRepository.findByPin(pin)
-                .orElseThrow(() -> new IllegalArgumentException("Session not found: " + pin));
+        String lockKey = ("session-nav:" + pin).intern();
+        synchronized (lockKey) {
+            LiveSession session = liveSessionRepository.findByPin(pin)
+                    .orElseThrow(() -> new IllegalArgumentException("Session not found: " + pin));
 
-        Quiz quiz = session.getQuiz();
-        List<Question> questions = quiz.getQuestions();
-        if (questionIndex < 0 || questionIndex >= questions.size()) {
-            throw new IllegalArgumentException("Invalid question index: " + questionIndex);
+            Quiz quiz = session.getQuiz();
+            List<Question> questions = quiz.getQuestions();
+            if (questionIndex < 0 || questionIndex >= questions.size()) {
+                throw new IllegalArgumentException("Invalid question index: " + questionIndex);
+            }
+
+            Question currentQuestion = questions.get(questionIndex);
+            long now = System.currentTimeMillis();
+            long durationMs = currentQuestion.getTimeLimit() * 1000L;
+
+            session.setStatus(SessionStatus.QUESTION_ACTIVE);
+            session.setCurrentQuestionIndex(questionIndex);
+            session.setQuestionStartedAtEpochMs(now);
+            session.setQuestionEndsAtEpochMs(now + durationMs);
+
+            liveSessionRepository.save(session);
+
+            // Broadcast QUESTION_STARTED event to candidates
+            CandidateQuestionDto candidateQ = toCandidateQuestionDto(currentQuestion);
+            Map<String, Object> questionPayload = new HashMap<>();
+            questionPayload.put("questionIndex", questionIndex);
+            questionPayload.put("totalQuestions", questions.size());
+            questionPayload.put("question", candidateQ);
+            questionPayload.put("startedAt", now);
+            questionPayload.put("endsAt", now + durationMs);
+            questionPayload.put("timeLimit", currentQuestion.getTimeLimit());
+            questionPayload.put("allowReselection", session.getQuiz().getAnswerChangePolicy() == AnswerChangePolicy.ALLOW_RESELECTION);
+            questionPayload.put("requireFullscreen", session.getQuiz().getRequireFullscreen());
+            questionPayload.put("monitorTabSwitch", session.getQuiz().getMonitorTabSwitch());
+            questionPayload.put("restrictCopyPaste", session.getQuiz().getRestrictCopyPaste());
+            questionPayload.put("warningThreshold", session.getQuiz().getWarningThreshold());
+            questionPayload.put("stateVersion", ((long) questionIndex * 10L) + 1L);
+
+            messagingTemplate.convertAndSend("/topic/session/" + pin,
+                    new WsMessage("QUESTION_STARTED", questionPayload));
+
+            // Deliver authoritative host session state to host topic
+            SessionStateResponse hostState = getHostSessionState(pin);
+            messagingTemplate.convertAndSend("/topic/session/" + pin + "/host",
+                    new WsMessage("HOST_STATE_CHANGED", hostState));
+
+            return hostState;
         }
-
-        Question currentQuestion = questions.get(questionIndex);
-        long now = System.currentTimeMillis();
-        long durationMs = currentQuestion.getTimeLimit() * 1000L;
-
-        session.setStatus(SessionStatus.QUESTION_ACTIVE);
-        session.setCurrentQuestionIndex(questionIndex);
-        session.setQuestionStartedAtEpochMs(now);
-        session.setQuestionEndsAtEpochMs(now + durationMs);
-
-        liveSessionRepository.save(session);
-
-        // Broadcast QUESTION_STARTED event
-        CandidateQuestionDto candidateQ = toCandidateQuestionDto(currentQuestion);
-        Map<String, Object> questionPayload = new HashMap<>();
-        questionPayload.put("questionIndex", questionIndex);
-        questionPayload.put("totalQuestions", questions.size());
-        questionPayload.put("question", candidateQ);
-        questionPayload.put("startedAt", now);
-        questionPayload.put("endsAt", now + durationMs);
-        questionPayload.put("timeLimit", currentQuestion.getTimeLimit());
-        questionPayload.put("allowReselection", session.getQuiz().getAnswerChangePolicy() == AnswerChangePolicy.ALLOW_RESELECTION);
-        questionPayload.put("requireFullscreen", session.getQuiz().getRequireFullscreen());
-        questionPayload.put("monitorTabSwitch", session.getQuiz().getMonitorTabSwitch());
-        questionPayload.put("restrictCopyPaste", session.getQuiz().getRestrictCopyPaste());
-        questionPayload.put("warningThreshold", session.getQuiz().getWarningThreshold());
-
-        messagingTemplate.convertAndSend("/topic/session/" + pin,
-                new WsMessage("QUESTION_STARTED", questionPayload));
-
-        return getHostSessionState(pin);
     }
 
     @Transactional
@@ -240,38 +249,44 @@ public class LiveSessionService {
         int marks = isCorrect ? currentQuestion.getMarks() : 0;
 
         Submission submission;
-        if (alreadySubmitted) {
-            submission = submissionRepository.findByLiveSessionIdAndParticipantIdAndQuestionId(
-                    session.getId(), participant.getId(), currentQuestion.getId()
-            ).orElseThrow(() -> new IllegalStateException("Submission record not found for update"));
+        String lockKey = (session.getId() + ":" + participant.getId() + ":" + currentQuestion.getId()).intern();
+        synchronized (lockKey) {
+            Optional<Submission> existingSub = submissionRepository.findByLiveSessionIdAndParticipantIdAndQuestionId(
+                    session.getId(), participant.getId(), currentQuestion.getId());
 
-            int previousMarks = submission.getMarksAwarded() != null ? submission.getMarksAwarded() : 0;
-            participant.setScore(Math.max(0, participant.getScore() - previousMarks + marks));
-            participantRepository.save(participant);
-
-            submission.setSelectedOption(selectedOption);
-            submission.setSelectedLabel(label);
-            submission.setIsCorrect(isCorrect);
-            submission.setMarksAwarded(marks);
-            submission.setResponseTimeMillis(now - (session.getQuestionStartedAtEpochMs() != null ? session.getQuestionStartedAtEpochMs() : now));
-            submission.setSubmittedAt(LocalDateTime.now());
-            submission = submissionRepository.save(submission);
-        } else {
-            submission = new Submission();
-            submission.setLiveSession(session);
-            submission.setParticipant(participant);
-            submission.setQuestion(currentQuestion);
-            submission.setSelectedOption(selectedOption);
-            submission.setSelectedLabel(label);
-            submission.setIsCorrect(isCorrect);
-            submission.setMarksAwarded(marks);
-            submission.setResponseTimeMillis(now - (session.getQuestionStartedAtEpochMs() != null ? session.getQuestionStartedAtEpochMs() : now));
-            submission.setSubmittedAt(LocalDateTime.now());
-            submission = submissionRepository.save(submission);
-
-            if (isCorrect) {
-                participant.setScore(participant.getScore() + marks);
+            if (existingSub.isPresent()) {
+                if (policy != AnswerChangePolicy.ALLOW_RESELECTION) {
+                    return existingSub.get();
+                }
+                submission = existingSub.get();
+                int previousMarks = submission.getMarksAwarded() != null ? submission.getMarksAwarded() : 0;
+                participant.setScore(Math.max(0, participant.getScore() - previousMarks + marks));
                 participantRepository.save(participant);
+
+                submission.setSelectedOption(selectedOption);
+                submission.setSelectedLabel(label);
+                submission.setIsCorrect(isCorrect);
+                submission.setMarksAwarded(marks);
+                submission.setResponseTimeMillis(now - (session.getQuestionStartedAtEpochMs() != null ? session.getQuestionStartedAtEpochMs() : now));
+                submission.setSubmittedAt(LocalDateTime.now());
+                submission = submissionRepository.save(submission);
+            } else {
+                submission = new Submission();
+                submission.setLiveSession(session);
+                submission.setParticipant(participant);
+                submission.setQuestion(currentQuestion);
+                submission.setSelectedOption(selectedOption);
+                submission.setSelectedLabel(label);
+                submission.setIsCorrect(isCorrect);
+                submission.setMarksAwarded(marks);
+                submission.setResponseTimeMillis(now - (session.getQuestionStartedAtEpochMs() != null ? session.getQuestionStartedAtEpochMs() : now));
+                submission.setSubmittedAt(LocalDateTime.now());
+                submission = submissionRepository.save(submission);
+
+                if (isCorrect) {
+                    participant.setScore(participant.getScore() + marks);
+                    participantRepository.save(participant);
+                }
             }
         }
 
@@ -290,78 +305,143 @@ public class LiveSessionService {
 
     @Transactional
     public SessionStateResponse revealAnswer(String pin) {
-        LiveSession session = liveSessionRepository.findByPin(pin)
-                .orElseThrow(() -> new IllegalArgumentException("Session not found: " + pin));
+        String lockKey = ("session-nav:" + pin).intern();
+        synchronized (lockKey) {
+            LiveSession session = liveSessionRepository.findByPin(pin)
+                    .orElseThrow(() -> new IllegalArgumentException("Session not found: " + pin));
 
-        session.setStatus(SessionStatus.QUESTION_REVEALED);
-        liveSessionRepository.save(session);
+            session.setStatus(SessionStatus.QUESTION_REVEALED);
+            liveSessionRepository.save(session);
 
-        Question currentQuestion = session.getQuiz().getQuestions().get(session.getCurrentQuestionIndex());
-        String correctLabel = currentQuestion.getOptions().stream()
-                .filter(AnswerOption::getIsCorrect)
-                .map(AnswerOption::getOptionLabel)
-                .findFirst()
-                .orElse("A");
+            Question currentQuestion = session.getQuiz().getQuestions().get(session.getCurrentQuestionIndex());
+            String correctLabel = currentQuestion.getOptions().stream()
+                    .filter(AnswerOption::getIsCorrect)
+                    .map(AnswerOption::getOptionLabel)
+                    .findFirst()
+                    .orElse("A");
 
-        long totalSubmissions = submissionRepository.countByLiveSessionIdAndQuestionId(session.getId(), currentQuestion.getId());
-        long correctSubmissions = submissionRepository.countByLiveSessionIdAndQuestionIdAndIsCorrectTrue(session.getId(), currentQuestion.getId());
-        double correctPercent = totalSubmissions > 0 ? ((double) correctSubmissions / totalSubmissions) * 100.0 : 0.0;
+            long totalSubmissions = submissionRepository.countByLiveSessionIdAndQuestionId(session.getId(), currentQuestion.getId());
+            long correctSubmissions = submissionRepository.countByLiveSessionIdAndQuestionIdAndIsCorrectTrue(session.getId(), currentQuestion.getId());
+            double correctPercent = totalSubmissions > 0 ? ((double) correctSubmissions / totalSubmissions) * 100.0 : 0.0;
 
-        OptionStatsDto stats = getOptionStats(session.getId(), currentQuestion.getId());
+            OptionStatsDto stats = getOptionStats(session.getId(), currentQuestion.getId());
 
-        boolean showAnswers = Boolean.TRUE.equals(session.getQuiz().getShowCorrectAnswers());
-        Map<String, Object> revealPayload = new HashMap<>();
-        revealPayload.put("correctOptionLabel", showAnswers ? correctLabel : null);
-        revealPayload.put("showCorrectAnswers", showAnswers);
-        revealPayload.put("correctPercentage", Math.round(correctPercent * 10.0) / 10.0);
-        revealPayload.put("counts", stats.getCounts());
-        revealPayload.put("totalSubmissions", totalSubmissions);
+            boolean showAnswers = Boolean.TRUE.equals(session.getQuiz().getShowCorrectAnswers());
+            Map<String, Object> revealPayload = new HashMap<>();
+            revealPayload.put("questionIndex", session.getCurrentQuestionIndex());
+            revealPayload.put("correctOptionLabel", showAnswers ? correctLabel : null);
+            revealPayload.put("showCorrectAnswers", showAnswers);
+            revealPayload.put("correctPercentage", Math.round(correctPercent * 10.0) / 10.0);
+            revealPayload.put("counts", stats.getCounts());
+            revealPayload.put("totalSubmissions", totalSubmissions);
+            revealPayload.put("stateVersion", ((long) session.getCurrentQuestionIndex() * 10L) + 5L);
 
-        messagingTemplate.convertAndSend("/topic/session/" + pin,
-                new WsMessage("QUESTION_REVEALED", revealPayload));
+            messagingTemplate.convertAndSend("/topic/session/" + pin,
+                    new WsMessage("QUESTION_REVEALED", revealPayload));
 
-        return getHostSessionState(pin);
+            SessionStateResponse hostState = getHostSessionState(pin);
+            messagingTemplate.convertAndSend("/topic/session/" + pin + "/host",
+                    new WsMessage("HOST_STATE_CHANGED", hostState));
+
+            return hostState;
+        }
     }
 
     @Transactional
     public SessionStateResponse advanceOrEnd(String pin) {
-        LiveSession session = liveSessionRepository.findByPin(pin)
-                .orElseThrow(() -> new IllegalArgumentException("Session not found: " + pin));
+        return advanceOrEnd(pin, null);
+    }
 
-        int nextIndex = session.getCurrentQuestionIndex() + 1;
-        if (nextIndex < session.getQuiz().getQuestions().size()) {
-            return startQuestion(pin, nextIndex);
-        } else {
-            return endQuiz(pin);
+    @Transactional
+    public SessionStateResponse advanceOrEnd(String pin, Integer expectedCurrentIndex) {
+        String lockKey = ("session-nav:" + pin).intern();
+        synchronized (lockKey) {
+            LiveSession session = liveSessionRepository.findByPin(pin)
+                    .orElseThrow(() -> new IllegalArgumentException("Session not found: " + pin));
+
+            if (session.getStatus() == SessionStatus.FINISHED) {
+                return getHostSessionState(pin);
+            }
+
+            // Guard against duplicate / race-condition requests skipping questions
+            if (expectedCurrentIndex != null && !session.getCurrentQuestionIndex().equals(expectedCurrentIndex)) {
+                return getHostSessionState(pin);
+            }
+
+            int nextIndex = session.getCurrentQuestionIndex() + 1;
+            if (nextIndex < session.getQuiz().getQuestions().size()) {
+                return startQuestion(pin, nextIndex);
+            } else {
+                return endQuiz(pin);
+            }
+        }
+    }
+
+    @Transactional
+    public SessionStateResponse previousQuestion(String pin) {
+        return previousQuestion(pin, null);
+    }
+
+    @Transactional
+    public SessionStateResponse previousQuestion(String pin, Integer expectedCurrentIndex) {
+        String lockKey = ("session-nav:" + pin).intern();
+        synchronized (lockKey) {
+            LiveSession session = liveSessionRepository.findByPin(pin)
+                    .orElseThrow(() -> new IllegalArgumentException("Session not found: " + pin));
+
+            if (session.getStatus() == SessionStatus.FINISHED) {
+                return getHostSessionState(pin);
+            }
+
+            // Guard against stale navigation
+            if (expectedCurrentIndex != null && !session.getCurrentQuestionIndex().equals(expectedCurrentIndex)) {
+                return getHostSessionState(pin);
+            }
+
+            int prevIndex = session.getCurrentQuestionIndex() - 1;
+            if (prevIndex >= 0) {
+                return startQuestion(pin, prevIndex);
+            } else {
+                return getHostSessionState(pin);
+            }
         }
     }
 
     @Transactional
     public SessionStateResponse endQuiz(String pin) {
-        LiveSession session = liveSessionRepository.findByPin(pin)
-                .orElseThrow(() -> new IllegalArgumentException("Session not found: " + pin));
+        String lockKey = ("session-nav:" + pin).intern();
+        synchronized (lockKey) {
+            LiveSession session = liveSessionRepository.findByPin(pin)
+                    .orElseThrow(() -> new IllegalArgumentException("Session not found: " + pin));
 
-        session.setStatus(SessionStatus.FINISHED);
-        liveSessionRepository.save(session);
+            session.setStatus(SessionStatus.FINISHED);
+            liveSessionRepository.save(session);
 
-        Quiz quiz = session.getQuiz();
-        if (quiz != null) {
-            quiz.setExamStatus(ExamStatus.COMPLETED);
-            quiz.setUpdatedAt(LocalDateTime.now());
-            quizRepository.save(quiz);
+            Quiz quiz = session.getQuiz();
+            if (quiz != null) {
+                quiz.setExamStatus(ExamStatus.COMPLETED);
+                quiz.setUpdatedAt(LocalDateTime.now());
+                quizRepository.save(quiz);
+            }
+
+            boolean resultsPublished = Boolean.TRUE.equals(session.getQuiz().getResultsPublished());
+            List<LeaderboardEntryDto> leaderboard = getLeaderboard(session.getId());
+
+            Map<String, Object> finishPayload = new HashMap<>();
+            finishPayload.put("questionIndex", session.getCurrentQuestionIndex());
+            finishPayload.put("resultsPublished", resultsPublished);
+            finishPayload.put("leaderboard", resultsPublished ? leaderboard : Collections.emptyList());
+            finishPayload.put("stateVersion", Long.MAX_VALUE);
+
+            messagingTemplate.convertAndSend("/topic/session/" + pin,
+                    new WsMessage("SESSION_FINISHED", finishPayload));
+
+            SessionStateResponse hostState = getHostSessionState(pin);
+            messagingTemplate.convertAndSend("/topic/session/" + pin + "/host",
+                    new WsMessage("HOST_STATE_CHANGED", hostState));
+
+            return hostState;
         }
-
-        boolean resultsPublished = Boolean.TRUE.equals(session.getQuiz().getResultsPublished());
-        List<LeaderboardEntryDto> leaderboard = getLeaderboard(session.getId());
-
-        Map<String, Object> finishPayload = new HashMap<>();
-        finishPayload.put("resultsPublished", resultsPublished);
-        finishPayload.put("leaderboard", resultsPublished ? leaderboard : Collections.emptyList());
-
-        messagingTemplate.convertAndSend("/topic/session/" + pin,
-                new WsMessage("SESSION_FINISHED", finishPayload));
-
-        return getHostSessionState(pin);
     }
 
     @Transactional(readOnly = true)

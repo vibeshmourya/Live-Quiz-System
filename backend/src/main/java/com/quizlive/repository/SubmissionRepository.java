@@ -25,6 +25,14 @@ public interface SubmissionRepository extends JpaRepository<Submission, Long> {
 
     long countByLiveSessionIdAndParticipantIdAndIsCorrectFalse(Long liveSessionId, Long participantId);
 
+    boolean existsByQuestionId(Long questionId);
+
+    boolean existsBySelectedOptionId(Long selectedOptionId);
+
+    boolean existsByLiveSessionQuizId(Long quizId);
+
+    long countByLiveSessionQuizId(Long quizId);
+
     @Query("SELECT s.selectedLabel, COUNT(s) FROM Submission s WHERE s.liveSession.id = :sessionId AND s.question.id = :questionId GROUP BY s.selectedLabel")
     List<Object[]> countBySelectedLabelForQuestion(@Param("sessionId") Long sessionId, @Param("questionId") Long questionId);
 }

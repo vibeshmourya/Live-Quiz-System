@@ -460,6 +460,7 @@ public class LiveSessionService {
         resp.setStatus(session.getStatus());
         resp.setCurrentQuestionIndex(session.getCurrentQuestionIndex());
         resp.setTotalQuestions(session.getQuiz().getQuestions().size());
+        resp.setTotalMarks(session.getQuiz().calculateTotalMarks());
         resp.setRequireFullscreen(session.getQuiz().getRequireFullscreen());
         resp.setMonitorTabSwitch(session.getQuiz().getMonitorTabSwitch());
         resp.setRestrictCopyPaste(session.getQuiz().getRestrictCopyPaste());
@@ -528,6 +529,7 @@ public class LiveSessionService {
         resp.setWarningThreshold(session.getQuiz().getWarningThreshold());
         resp.setResultsPublished(session.getQuiz().getResultsPublished());
         resp.setShowCorrectAnswers(session.getQuiz().getShowCorrectAnswers());
+        resp.setTotalMarks(session.getQuiz().calculateTotalMarks());
 
         if (participant != null) {
             resp.setNickname(participant.getNickname());
@@ -631,12 +633,15 @@ public class LiveSessionService {
         return new OptionStatsDto(counts, total);
     }
 
+    @Transactional(readOnly = true)
     public List<LeaderboardEntryDto> getLeaderboard(Long sessionId) {
+        LiveSession session = liveSessionRepository.findById(sessionId).orElse(null);
+        int totalMarks = (session != null && session.getQuiz() != null) ? session.getQuiz().calculateTotalMarks() : 0;
         List<Participant> participants = participantRepository.findByLiveSessionIdOrderByScoreDesc(sessionId);
         List<LeaderboardEntryDto> entries = new ArrayList<>();
         int rank = 1;
         for (Participant p : participants) {
-            entries.add(new LeaderboardEntryDto(rank++, p.getNickname(), p.getScore(), p.getCandidateId()));
+            entries.add(new LeaderboardEntryDto(rank++, p.getNickname(), p.getScore(), p.getCandidateId(), totalMarks));
         }
         return entries;
     }

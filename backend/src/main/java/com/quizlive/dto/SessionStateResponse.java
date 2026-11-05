@@ -26,6 +26,7 @@ public class SessionStateResponse {
     private boolean restrictCopyPaste;
     private Map<String, Long> optionCounts = new HashMap<>();
     private List<LeaderboardEntryDto> leaderboard;
+    private int totalMarks;
 
     public SessionStateResponse() {}
 
@@ -187,5 +188,13 @@ public class SessionStateResponse {
 
     public void setLeaderboard(List<LeaderboardEntryDto> leaderboard) {
         this.leaderboard = leaderboard;
+    }
+
+    public int getTotalMarks() {
+        return totalMarks;
+    }
+
+    public void setTotalMarks(int totalMarks) {
+        this.totalMarks = totalMarks;
     }
 }

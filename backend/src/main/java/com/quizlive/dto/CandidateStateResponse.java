@@ -21,6 +21,7 @@ public class CandidateStateResponse {
     private String correctOptionLabel;  // Alias for revealedCorrectLabel
     private Boolean wasCorrect;           // Only non-null if revealed or finished
     private int myScore;
+    private int totalMarks;
     private Integer myRank;              // When finished
     private Long totalCorrect;           // When finished
     private Long totalIncorrect;         // When finished
@@ -186,6 +187,14 @@ public class CandidateStateResponse {
 
     public void setMyScore(int myScore) {
         this.myScore = myScore;
+    }
+
+    public int getTotalMarks() {
+        return totalMarks;
+    }
+
+    public void setTotalMarks(int totalMarks) {
+        this.totalMarks = totalMarks;
     }
 
     public Integer getMyRank() {

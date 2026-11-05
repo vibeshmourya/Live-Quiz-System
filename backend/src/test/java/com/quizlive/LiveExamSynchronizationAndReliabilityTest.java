@@ -601,12 +601,12 @@ public class LiveExamSynchronizationAndReliabilityTest {
         req2.setOptionLabel("B");
         liveSessionService.submitAnswer(req2);
 
-        // Candidate 3 selects Option D (Incorrect)
+        // Candidate 3 selects Option C (Incorrect)
         SubmitAnswerRequest req3 = new SubmitAnswerRequest();
         req3.setSessionPin(pin);
         req3.setCandidateId(candidates.get(2).getCandidateId());
         req3.setQuestionId(questions.get(2).getId());
-        req3.setOptionLabel("D");
+        req3.setOptionLabel("C");
         liveSessionService.submitAnswer(req3);
 
         // Candidate 4 does not answer (unanswered / time up)
@@ -618,6 +618,14 @@ public class LiveExamSynchronizationAndReliabilityTest {
         req5.setQuestionId(questions.get(2).getId());
         req5.setOptionLabel("A");
         liveSessionService.submitAnswer(req5);
+
+        // Verify that BEFORE faculty reveals answer, correct answer is NEVER exposed to candidate
+        CandidateStateResponse cand1Active = liveSessionService.getCandidateSessionState(pin, candidates.get(0).getCandidateId());
+        assertNull(cand1Active.getRevealedCorrectLabel(), "Correct label must NOT be exposed while question is active");
+        assertNull(cand1Active.getCorrectOptionLabel(), "Correct option label must NOT be exposed while question is active");
+        assertNull(cand1Active.getWasCorrect(), "wasCorrect must be null while question is active");
+        assertEquals("A", cand1Active.getMySelectedLabel(), "Candidate's own selection is preserved");
+        assertTrue(cand1Active.isHasSubmitted(), "Candidate hasSubmitted is true");
 
         // Faculty reveals answer
         SessionStateResponse host = liveSessionService.revealAnswer(pin);
@@ -631,6 +639,7 @@ public class LiveExamSynchronizationAndReliabilityTest {
         assertEquals("A", cand1State.getMySelectedLabel(), "Selected label must be 'A'");
         assertEquals(Boolean.TRUE, cand1State.getWasCorrect(), "Candidate 1 must be marked correct");
         assertTrue(cand1State.isHasSubmitted(), "Candidate 1 has submitted");
+        assertEquals(40, cand1State.getTotalMarks(), "Candidate state total marks must be 40 (4 questions * 10 marks)");
 
         // Verify Candidate 2: Selected B -> Must be evaluated as Incorrect, verdict false, revealed label "A"
         CandidateStateResponse cand2State = liveSessionService.getCandidateSessionState(pin, candidates.get(1).getCandidateId());
@@ -638,11 +647,11 @@ public class LiveExamSynchronizationAndReliabilityTest {
         assertEquals("B", cand2State.getMySelectedLabel());
         assertEquals(Boolean.FALSE, cand2State.getWasCorrect(), "Candidate 2 selected B, so wasCorrect must be false");
 
-        // Verify Candidate 3: Selected D -> Must be evaluated as Incorrect, verdict false, revealed label "A"
+        // Verify Candidate 3: Selected C -> Must be evaluated as Incorrect, verdict false, revealed label "A"
         CandidateStateResponse cand3State = liveSessionService.getCandidateSessionState(pin, candidates.get(2).getCandidateId());
         assertEquals("A", cand3State.getRevealedCorrectLabel());
-        assertEquals("D", cand3State.getMySelectedLabel());
-        assertEquals(Boolean.FALSE, cand3State.getWasCorrect(), "Candidate 3 selected D, so wasCorrect must be false");
+        assertEquals("C", cand3State.getMySelectedLabel());
+        assertEquals(Boolean.FALSE, cand3State.getWasCorrect(), "Candidate 3 selected C, so wasCorrect must be false");
 
         // Verify Candidate 4: Unanswered -> verdict false, hasSubmitted false, revealed label "A"
         CandidateStateResponse cand4State = liveSessionService.getCandidateSessionState(pin, candidates.get(3).getCandidateId());
@@ -656,5 +665,19 @@ public class LiveExamSynchronizationAndReliabilityTest {
         assertEquals("A", cand5Reloaded.getRevealedCorrectLabel(), "Candidate 5 reloaded must restore 'A'");
         assertEquals("A", cand5Reloaded.getMySelectedLabel());
         assertEquals(Boolean.TRUE, cand5Reloaded.getWasCorrect(), "Candidate 5 reloaded must evaluate to true");
+
+        // Advance to Question 4 and finish
+        liveSessionService.advanceOrEnd(pin);
+        liveSessionService.revealAnswer(pin);
+        liveSessionService.advanceOrEnd(pin);
+
+        // Verify Marks-Only Leaderboard format
+        List<LeaderboardEntryDto> leaderboard = liveSessionService.getLeaderboard(session.getId());
+        assertFalse(leaderboard.isEmpty(), "Leaderboard must not be empty");
+        for (LeaderboardEntryDto entry : leaderboard) {
+            assertTrue(entry.getTotalMarks() > 0, "Leaderboard entry must include totalMarks");
+            assertNotNull(entry.getNickname(), "Leaderboard entry must include nickname");
+            assertTrue(entry.getScore() >= 0, "Leaderboard entry must include marks obtained (score)");
+        }
     }
 }

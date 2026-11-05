@@ -5,6 +5,7 @@ public class LeaderboardEntryDto {
     private String nickname;
     private int score;
     private String candidateId;
+    private int totalMarks;
 
     public LeaderboardEntryDto() {}
 
@@ -13,6 +14,14 @@ public class LeaderboardEntryDto {
         this.nickname = nickname;
         this.score = score;
         this.candidateId = candidateId;
+    }
+
+    public LeaderboardEntryDto(int rank, String nickname, int score, String candidateId, int totalMarks) {
+        this.rank = rank;
+        this.nickname = nickname;
+        this.score = score;
+        this.candidateId = candidateId;
+        this.totalMarks = totalMarks;
     }
 
     public int getRank() {
@@ -45,5 +54,13 @@ public class LeaderboardEntryDto {
 
     public void setCandidateId(String candidateId) {
         this.candidateId = candidateId;
+    }
+
+    public int getTotalMarks() {
+        return totalMarks;
+    }
+
+    public void setTotalMarks(int totalMarks) {
+        this.totalMarks = totalMarks;
     }
 }

@@ -70,13 +70,23 @@ export default function CandidateQuizPage({
         if (!data) return prev;
 
         // Preserve client-cached answer if incoming data lacks it
-        const currentQId = data.currentQuestion?.id || prev?.currentQuestion?.id;
+        const currentQId = data.currentQuestion?.id;
         const cachedAnswer = currentQId ? answersMapRef.current[currentQId] : null;
-        const mySelected = data.mySelectedLabel || cachedAnswer || selectedLabelRef.current || prev?.mySelectedLabel || null;
+        const isSameQuestion = Boolean(
+          (prev?.currentQuestionIndex !== undefined && prev.currentQuestionIndex === data.currentQuestionIndex) ||
+          (currentQId && prev?.currentQuestion?.id === currentQId)
+        );
+
+        // Only inherit choice if it matches the current question
+        const mySelected = data.mySelectedLabel || cachedAnswer || (isSameQuestion ? (selectedLabelRef.current || prev?.mySelectedLabel) : null) || null;
 
         // Authoritative correct label resolution:
-        // Use incoming label, or preserve already known revealed label
-        const resolvedCorrect = data.revealedCorrectLabel || data.correctOptionLabel || prev?.revealedCorrectLabel || prev?.correctOptionLabel || null;
+        // ONLY populated when question is revealed or session finished, and only preserved if same question
+        let resolvedCorrect = null;
+        if (data.status === 'QUESTION_REVEALED' || data.status === 'FINISHED') {
+          resolvedCorrect = data.revealedCorrectLabel || data.correctOptionLabel ||
+            (isSameQuestion ? (prev?.revealedCorrectLabel || prev?.correctOptionLabel || null) : null);
+        }
 
         // Authoritative correctness evaluation:
         let resolvedWasCorrect = null;
@@ -85,8 +95,10 @@ export default function CandidateQuizPage({
             resolvedWasCorrect = Boolean(data.wasCorrect);
           } else if (resolvedCorrect && mySelected) {
             resolvedWasCorrect = resolvedCorrect.trim().toUpperCase() === mySelected.trim().toUpperCase();
-          } else if (prev?.wasCorrect !== undefined && prev?.wasCorrect !== null) {
+          } else if (isSameQuestion && prev?.wasCorrect !== undefined && prev?.wasCorrect !== null) {
             resolvedWasCorrect = prev.wasCorrect;
+          } else {
+            resolvedWasCorrect = false;
           }
         }
 
@@ -104,11 +116,12 @@ export default function CandidateQuizPage({
       if (data?.myIncidentCount !== undefined) {
         setIncidentCount(data.myIncidentCount);
       }
-      if (data?.hasSubmitted && data?.mySelectedLabel) {
-        if (data.currentQuestion?.id) {
-          answersMapRef.current[data.currentQuestion.id] = data.mySelectedLabel;
-        }
-        setSelectedLabel(data.mySelectedLabel);
+      const currentQId = data?.currentQuestion?.id;
+      const cachedAnswer = currentQId ? answersMapRef.current[currentQId] : null;
+      const effectiveSelected = data?.mySelectedLabel || cachedAnswer || null;
+      setSelectedLabel(effectiveSelected);
+      if (currentQId && data?.mySelectedLabel) {
+        answersMapRef.current[currentQId] = data.mySelectedLabel;
       }
       if (data?.status === 'FINISHED') {
         onFinished(data);
@@ -292,6 +305,7 @@ export default function CandidateQuizPage({
               hasSubmitted: Boolean(previousAnswer),
               mySelectedLabel: previousAnswer || null,
               revealedCorrectLabel: null,
+              correctOptionLabel: null,
               wasCorrect: null,
             };
           });
@@ -305,7 +319,9 @@ export default function CandidateQuizPage({
             }
             const currentQId = prev.currentQuestion?.id;
             const activeChoice = (selectedLabelRef.current || prev.mySelectedLabel || (currentQId ? answersMapRef.current[currentQId] : null) || '').trim().toUpperCase();
-            const revealedCorrect = (payload.correctOptionLabel || payload.revealedCorrectLabel || payload.correctAnswer || prev.revealedCorrectLabel || prev.correctOptionLabel || '').trim().toUpperCase();
+            const sameQuestion = payload.questionIndex === undefined || payload.questionIndex === prev.currentQuestionIndex;
+            const fallbackPrevCorrect = sameQuestion ? (prev.revealedCorrectLabel || prev.correctOptionLabel || '') : '';
+            const revealedCorrect = (payload.correctOptionLabel || payload.revealedCorrectLabel || payload.correctAnswer || fallbackPrevCorrect).trim().toUpperCase();
 
             let isCorrect = null;
             if (payload.wasCorrect !== undefined && payload.wasCorrect !== null) {
@@ -321,8 +337,8 @@ export default function CandidateQuizPage({
             return {
               ...prev,
               status: 'QUESTION_REVEALED',
-              revealedCorrectLabel: revealedCorrect || prev.revealedCorrectLabel || null,
-              correctOptionLabel: revealedCorrect || prev.correctOptionLabel || null,
+              revealedCorrectLabel: revealedCorrect || null,
+              correctOptionLabel: revealedCorrect || null,
               wasCorrect: isCorrect,
             };
           });

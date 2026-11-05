@@ -65,8 +65,6 @@ public class ReportExportService {
         Quiz quiz = session.getQuiz();
         int totalMarks = quiz.calculateTotalMarks();
         int studentScore = participant.getScore() != null ? participant.getScore() : 0;
-        double percentage = totalMarks > 0 ? ((double) studentScore / totalMarks) * 100.0 : 0.0;
-        String grade = calculateGrade(percentage);
 
         long correctCount = submissionRepository.countByLiveSessionIdAndParticipantIdAndIsCorrectTrue(session.getId(), participant.getId());
         long incorrectCount = submissionRepository.countByLiveSessionIdAndParticipantIdAndIsCorrectFalse(session.getId(), participant.getId());
@@ -122,19 +120,16 @@ public class ReportExportService {
             perfHeader.setSpacingAfter(8);
             document.add(perfHeader);
 
-            PdfPTable perfTable = new PdfPTable(4);
+            PdfPTable perfTable = new PdfPTable(2);
             perfTable.setWidthPercentage(100);
+            perfTable.setWidths(new float[]{50, 50});
             perfTable.setSpacingAfter(15);
 
-            addHeaderCell(perfTable, "Score Obtained");
-            addHeaderCell(perfTable, "Maximum Marks");
-            addHeaderCell(perfTable, "Percentage");
-            addHeaderCell(perfTable, "Grade / Status");
+            addHeaderCell(perfTable, "Marks Obtained");
+            addHeaderCell(perfTable, "Total Marks");
 
-            addCenterCell(perfTable, String.valueOf(studentScore) + " pts", boldFont);
-            addCenterCell(perfTable, String.valueOf(totalMarks) + " pts", normalFont);
-            addCenterCell(perfTable, String.format("%.1f%%", percentage), boldFont);
-            addCenterCell(perfTable, grade + (percentage >= 40.0 ? " (PASS)" : " (FAIL)"), boldFont);
+            addCenterCell(perfTable, String.valueOf(studentScore), boldFont);
+            addCenterCell(perfTable, String.valueOf(totalMarks), normalFont);
 
             document.add(perfTable);
 
@@ -254,29 +249,26 @@ public class ReportExportService {
             rosterTitle.setSpacingAfter(8);
             document.add(rosterTitle);
 
-            PdfPTable table = new PdfPTable(6);
+            PdfPTable table = new PdfPTable(5);
             table.setWidthPercentage(100);
-            table.setWidths(new float[]{10, 30, 15, 15, 15, 15});
+            table.setWidths(new float[]{12, 38, 20, 20, 10});
             table.setSpacingAfter(15);
 
             addHeaderCell(table, "Rank");
             addHeaderCell(table, "Student Display Name");
-            addHeaderCell(table, "Marks");
-            addHeaderCell(table, "Percentage");
-            addHeaderCell(table, "Grade");
+            addHeaderCell(table, "Marks Obtained");
+            addHeaderCell(table, "Total Marks");
             addHeaderCell(table, "Incidents");
 
             int rank = 1;
             for (Participant p : participants) {
                 int score = p.getScore() != null ? p.getScore() : 0;
-                double pct = totalMarks > 0 ? ((double) score / totalMarks) * 100.0 : 0.0;
                 long incidentCount = incidentRepository.countByLiveSessionIdAndParticipantId(session.getId(), p.getId());
 
                 addCenterCell(table, "#" + rank++, boldFont);
                 addTableCell(table, sanitizeText(p.getNickname()), normalFont, false);
-                addCenterCell(table, score + " / " + totalMarks, normalFont);
-                addCenterCell(table, String.format("%.1f%%", pct), normalFont);
-                addCenterCell(table, calculateGrade(pct), boldFont);
+                addCenterCell(table, String.valueOf(score), boldFont);
+                addCenterCell(table, String.valueOf(totalMarks), normalFont);
                 addCenterCell(table, String.valueOf(incidentCount), incidentCount > 0 ? boldFont : normalFont);
             }
 
@@ -307,28 +299,24 @@ public class ReportExportService {
         PrintWriter pw = new PrintWriter(sw);
 
         // Header line
-        pw.println("Rank,Candidate ID,Nickname,Marks Obtained,Maximum Marks,Percentage,Grade,Correct Count,Incorrect Count,Incident Count,Status");
+        pw.println("Rank,Candidate ID,Nickname,Marks Obtained,Total Marks,Correct Count,Incorrect Count,Incident Count");
 
         int rank = 1;
         for (Participant p : participants) {
             int score = p.getScore() != null ? p.getScore() : 0;
-            double pct = totalMarks > 0 ? ((double) score / totalMarks) * 100.0 : 0.0;
             long correct = submissionRepository.countByLiveSessionIdAndParticipantIdAndIsCorrectTrue(session.getId(), p.getId());
             long incorrect = submissionRepository.countByLiveSessionIdAndParticipantIdAndIsCorrectFalse(session.getId(), p.getId());
             long incidents = incidentRepository.countByLiveSessionIdAndParticipantId(session.getId(), p.getId());
 
-            pw.printf("%d,%s,%s,%d,%d,%.1f%%,%s,%d,%d,%d,%s%n",
+            pw.printf("%d,%s,%s,%d,%d,%d,%d,%d%n",
                     rank++,
                     escapeCsv(p.getCandidateId()),
                     escapeCsv(p.getNickname()),
                     score,
                     totalMarks,
-                    pct,
-                    calculateGrade(pct),
                     correct,
                     incorrect,
-                    incidents,
-                    pct >= 40.0 ? "PASS" : "FAIL"
+                    incidents
             );
         }
 
@@ -447,16 +435,6 @@ public class ReportExportService {
         cell.setPadding(5);
         cell.setHorizontalAlignment(Element.ALIGN_CENTER);
         table.addCell(cell);
-    }
-
-    private String calculateGrade(double percentage) {
-        if (percentage >= 90.0) return "A+";
-        if (percentage >= 80.0) return "A";
-        if (percentage >= 70.0) return "B";
-        if (percentage >= 60.0) return "C";
-        if (percentage >= 50.0) return "D";
-        if (percentage >= 40.0) return "E";
-        return "F";
     }
 
     private String sanitizeText(String input) {

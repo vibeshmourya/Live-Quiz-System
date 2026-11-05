@@ -6,6 +6,8 @@ import com.quizlive.model.*;
 import com.quizlive.repository.*;
 import com.quizlive.service.AuthService;
 import com.quizlive.service.ReportExportService;
+import com.lowagie.text.pdf.PdfReader;
+import com.lowagie.text.pdf.parser.PdfTextExtractor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -65,7 +67,7 @@ public class ExportReportTest {
         Question q1 = new Question();
         q1.setQuestionText("Is DFA equivalent to NFA in language recognition power?");
         q1.setTimeLimit(30);
-        q1.setMarks(5);
+        q1.setMarks(100);
         q1.setOrderIndex(0);
         q1.setQuiz(quiz);
 
@@ -121,6 +123,21 @@ public class ExportReportTest {
         // Valid PDF magic header
         String header = new String(pdfBytes, 0, 4);
         assertEquals("%PDF", header);
+
+        // Inspect actual generated PDF content
+        try (PdfReader reader = new PdfReader(pdfBytes)) {
+            PdfTextExtractor extractor = new PdfTextExtractor(reader);
+            String pdfText = extractor.getTextFromPage(1);
+            assertNotNull(pdfText);
+            assertTrue(pdfText.contains("Rank"), "PDF must contain Rank column");
+            assertTrue(pdfText.contains("Student Display Name"), "PDF must contain Student Display Name column");
+            assertTrue(pdfText.contains("Marks Obtained"), "PDF must contain Marks Obtained column");
+            assertTrue(pdfText.contains("Total Marks"), "PDF must contain Total Marks column");
+            assertTrue(pdfText.contains("95"), "PDF must contain student marks obtained (95)");
+            assertTrue(pdfText.contains("100"), "PDF must contain total marks (100)");
+            assertFalse(pdfText.contains("Percentage"), "PDF must NOT contain Percentage column");
+            assertFalse(pdfText.contains("Grade"), "PDF must NOT contain Grade column");
+        }
     }
 
     @Test
@@ -144,9 +161,15 @@ public class ExportReportTest {
                 .getContentAsString();
 
         assertNotNull(csvContent);
-        assertTrue(csvContent.contains("Rank,Candidate ID,Nickname"));
+        assertTrue(csvContent.contains("Rank,Candidate ID,Nickname,Marks Obtained,Total Marks,Correct Count,Incorrect Count,Incident Count"));
+        // Confirm removal of Percentage, Grade, and Status columns
+        assertFalse(csvContent.contains("Percentage"));
+        assertFalse(csvContent.contains("Grade"));
+        assertFalse(csvContent.contains("Status"));
         // Check CSV escaping for quotes/commas in nickname: Alec "The Coder" O'Neill, Jr.
         assertTrue(csvContent.contains("\"Alec \"\"The Coder\"\" O'Neill, Jr.\""));
+        // Confirm realistic mapping: Marks Obtained = 95, Total Marks = 100
+        assertTrue(csvContent.contains(",95,100,"), "CSV row must correctly map Marks Obtained (95) and Total Marks (100)");
     }
 
     @Test
@@ -162,6 +185,15 @@ public class ExportReportTest {
 
         assertNotNull(pdfBytes);
         assertEquals("%PDF", new String(pdfBytes, 0, 4));
+
+        // Inspect incident PDF content
+        try (PdfReader reader = new PdfReader(pdfBytes)) {
+            PdfTextExtractor extractor = new PdfTextExtractor(reader);
+            String pdfText = extractor.getTextFromPage(1);
+            assertNotNull(pdfText);
+            assertTrue(pdfText.contains("LOGGED SECURITY & TECHNICAL INCIDENTS"), "Must contain incident header");
+            assertTrue(pdfText.contains("FULLSCREEN_EXIT"), "Must contain logged incident type");
+        }
     }
 
     @Test
@@ -177,5 +209,20 @@ public class ExportReportTest {
 
         assertNotNull(pdfBytes);
         assertEquals("%PDF", new String(pdfBytes, 0, 4));
+
+        // Inspect actual generated individual student PDF content
+        try (PdfReader reader = new PdfReader(pdfBytes)) {
+            PdfTextExtractor extractor = new PdfTextExtractor(reader);
+            String pdfText = extractor.getTextFromPage(1);
+            assertNotNull(pdfText);
+            assertTrue(pdfText.contains("Marks Obtained"), "Student PDF must contain Marks Obtained header");
+            assertTrue(pdfText.contains("Total Marks"), "Student PDF must contain Total Marks header");
+            assertTrue(pdfText.contains("95"), "Student PDF must contain student score (95)");
+            assertTrue(pdfText.contains("100"), "Student PDF must contain total marks (100)");
+            assertFalse(pdfText.contains("Percentage"), "Student PDF must NOT contain Percentage");
+            assertFalse(pdfText.contains("Grade"), "Student PDF must NOT contain Grade");
+            assertFalse(pdfText.contains("PASS"), "Student PDF must NOT contain PASS");
+            assertFalse(pdfText.contains("FAIL"), "Student PDF must NOT contain FAIL");
+        }
     }
 }

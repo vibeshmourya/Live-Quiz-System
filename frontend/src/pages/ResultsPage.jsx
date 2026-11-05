@@ -126,8 +126,9 @@ export default function ResultsPage({ results, isHost, onNavigate, candidateInfo
             {candidateInfo?.nickname || results?.nickname || 'Your Performance'}
           </span>
           <div className="text-4xl font-extrabold text-indigo-600 my-2">
-            {results?.myScore ?? 0} pts
+            {results?.myScore ?? 0} {results?.totalMarks ? `/ ${results.totalMarks}` : ''}
           </div>
+          <div className="text-xs font-semibold text-slate-500">Marks Obtained</div>
 
           <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-slate-100 text-xs">
             <div>
@@ -169,54 +170,58 @@ export default function ResultsPage({ results, isHost, onNavigate, candidateInfo
           {leaderboard.length === 0 ? (
             <p className="text-xs text-slate-500 text-center py-4">No participants recorded.</p>
           ) : (
-            <div className="divide-y divide-slate-100">
-              {leaderboard.map((entry) => {
-                const isMe = candidateInfo && entry.candidateId === candidateInfo.candidateId;
-                return (
-                  <div
-                    key={entry.candidateId || entry.rank}
-                    className={`flex items-center justify-between py-3 px-2 rounded-lg ${
-                      isMe ? 'bg-indigo-50/80 font-bold' : ''
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <span
-                        className={`w-6 text-center font-mono text-xs font-bold ${
-                          entry.rank === 1
-                            ? 'text-amber-500'
-                            : entry.rank === 2
-                            ? 'text-slate-400'
-                            : entry.rank === 3
-                            ? 'text-amber-700'
-                            : 'text-slate-500'
-                        }`}
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 text-slate-500 font-semibold uppercase text-[11px]">
+                    <th className="py-2.5 px-3">Rank</th>
+                    <th className="py-2.5 px-3">Student</th>
+                    <th className="py-2.5 px-3 text-right">Marks Obtained</th>
+                    <th className="py-2.5 px-3 text-right">Total Marks</th>
+                    {isHost && <th className="py-2.5 px-3 text-center">Report</th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {leaderboard.map((entry) => {
+                    const isMe = candidateInfo && entry.candidateId === candidateInfo.candidateId;
+                    const maxMarks = entry.totalMarks || results?.totalMarks || '-';
+                    return (
+                      <tr
+                        key={entry.candidateId || entry.rank}
+                        className={`hover:bg-slate-50/50 ${isMe ? 'bg-indigo-50/80 font-bold' : ''}`}
                       >
-                        {entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : entry.rank === 3 ? '🥉' : `#${entry.rank}`}
-                      </span>
-                      <span className="text-sm text-slate-900">
-                        {entry.nickname} {isMe && '(You)'}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-mono font-bold text-indigo-700">
-                        {entry.score} pts
-                      </span>
-                      {isHost && entry.candidateId && (
-                        <button
-                          type="button"
-                          disabled={downloading}
-                          onClick={() => handleDownloadStudentPdf(entry.candidateId)}
-                          className="text-[11px] font-medium text-slate-500 hover:text-indigo-600 hover:underline disabled:opacity-50"
-                          title="Download individual candidate PDF report"
-                        >
-                          PDF Report
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+                        <td className="py-3 px-3 font-mono font-bold text-slate-700">
+                          {entry.rank === 1 ? '🥇 #1' : entry.rank === 2 ? '🥈 #2' : entry.rank === 3 ? '🥉 #3' : `#${entry.rank}`}
+                        </td>
+                        <td className="py-3 px-3 text-slate-900 font-medium">
+                          {entry.nickname} {isMe && <span className="text-indigo-600 font-semibold">(You)</span>}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono font-bold text-indigo-700">
+                          {entry.score}
+                        </td>
+                        <td className="py-3 px-3 text-right font-mono text-slate-600">
+                          {maxMarks}
+                        </td>
+                        {isHost && (
+                          <td className="py-3 px-3 text-center">
+                            {entry.candidateId ? (
+                              <button
+                                type="button"
+                                disabled={downloading}
+                                onClick={() => handleDownloadStudentPdf(entry.candidateId)}
+                                className="text-[11px] font-medium text-slate-500 hover:text-indigo-600 hover:underline disabled:opacity-50 cursor-pointer"
+                                title="Download individual candidate PDF report"
+                              >
+                                PDF Report
+                              </button>
+                            ) : '-'}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>

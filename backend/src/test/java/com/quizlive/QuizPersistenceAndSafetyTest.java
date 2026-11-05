@@ -37,6 +37,9 @@ public class QuizPersistenceAndSafetyTest {
     @Autowired
     private SubmissionRepository submissionRepository;
 
+    @Autowired
+    private ExamIncidentRepository examIncidentRepository;
+
     @Test
     @DisplayName("Should create and save a new quiz draft with proper relationships")
     void testCreateQuizAndSaveDraft() {
@@ -249,8 +252,9 @@ public class QuizPersistenceAndSafetyTest {
             quizService.deleteQuiz(quizId);
         });
 
-        assertTrue(ex.getMessage().contains("Cannot delete this examination because it contains historical examination records"),
-                "Expected explanation regarding academic integrity and historical submissions");
+        assertTrue(ex.getMessage().contains("Cannot delete this examination because it contains") &&
+                ex.getMessage().contains("student submission(s)"),
+                "Expected explanation regarding academic integrity and student submissions");
 
         // Verify quiz is NOT deleted
         assertTrue(quizRepository.existsById(quiz.getId()), "Quiz must remain in database");
@@ -290,5 +294,148 @@ public class QuizPersistenceAndSafetyTest {
 
         assertFalse(quizRepository.existsById(emptyQuizId), "Quiz should be deleted");
         assertFalse(liveSessionRepository.findByPin("778899").isPresent(), "Empty session should be cleaned up");
+    }
+
+    @Test
+    @DisplayName("Should safely delete test quiz having test sessions, test participants, and test incidents when no submissions exist")
+    void testSafeQuizDeletionWithTestSessionAndParticipantsAndIncidentsNoSubmissions() {
+        Quiz quiz = new Quiz("Internal Dry-Run Test Quiz");
+        quiz.setFacultyUsername("prof_tester");
+        quiz.setExamStatus(ExamStatus.SCHEDULED);
+
+        Question q = new Question();
+        q.setQuestionText("Test Question?");
+        q.setTimeLimit(15);
+        q.setMarks(2);
+        q.setOrderIndex(0);
+        q.setQuiz(quiz);
+
+        AnswerOption opt = new AnswerOption("A", "Choice A", true);
+        opt.setQuestion(q);
+        q.setOptions(new ArrayList<>(List.of(opt)));
+        quiz.setQuestions(new ArrayList<>(List.of(q)));
+        quiz = quizRepository.save(quiz);
+
+        // Test session
+        LiveSession testSession = new LiveSession("998877", quiz);
+        testSession.setStatus(SessionStatus.QUESTION_ACTIVE);
+        testSession = liveSessionRepository.save(testSession);
+
+        // Test participant who joined lobby/test
+        Participant testParticipant = new Participant(testSession, "998877", "test-cand-01", "Test Tester");
+        testParticipant = participantRepository.save(testParticipant);
+
+        // Test incident (e.g. simulated tab switch)
+        ExamIncident testIncident = new ExamIncident(testSession, testParticipant, IncidentType.TAB_SWITCH, "Testing tab switch monitor");
+        testIncident = examIncidentRepository.save(testIncident);
+
+        final Long testQuizId = quiz.getId();
+        final Long testSessionId = testSession.getId();
+        final Long testParticipantId = testParticipant.getId();
+        final Long testIncidentId = testIncident.getId();
+
+        // Zero submissions exist for this test quiz
+        assertEquals(0, submissionRepository.countByLiveSessionQuizId(testQuizId));
+
+        // Deleting test quiz should cleanly cascade and delete test session, participant, and incident
+        assertDoesNotThrow(() -> {
+            quizService.deleteQuiz(testQuizId);
+        });
+
+        assertFalse(quizRepository.existsById(testQuizId), "Test quiz must be deleted");
+        assertFalse(liveSessionRepository.existsById(testSessionId), "Test session must be cleaned up");
+        assertFalse(participantRepository.existsById(testParticipantId), "Test participant must be cleaned up");
+        assertFalse(examIncidentRepository.existsById(testIncidentId), "Test incident must be cleaned up");
+    }
+
+    @Test
+    @DisplayName("Should prevent deletion of a LIVE quiz while examination is ongoing")
+    void testPreventQuizDeletionWhenLive() {
+        Quiz quiz = new Quiz("Ongoing Live Examination");
+        quiz.setFacultyUsername("prof_vibesh");
+        quiz.setExamStatus(ExamStatus.LIVE);
+        quiz = quizRepository.save(quiz);
+
+        final Long liveQuizId = quiz.getId();
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> {
+            quizService.deleteQuiz(liveQuizId);
+        });
+
+        assertTrue(ex.getMessage().contains("LIVE"), "Expected error stating exam is currently LIVE");
+        assertTrue(quizRepository.existsById(liveQuizId), "Live quiz must remain untouched in database");
+    }
+
+    @Test
+    @DisplayName("Should verify that deleting Quiz B does not affect unrelated Quiz A and its student submissions")
+    void testDeletingQuizDoesNotAffectUnrelatedQuizOrStudentRecords() {
+        // Quiz A: Genuine exam with student submission
+        Quiz quizA = new Quiz("Official Data Structures Midterm");
+        quizA.setFacultyUsername("prof_real");
+        quizA.setExamStatus(ExamStatus.COMPLETED);
+
+        Question qA = new Question();
+        qA.setQuestionText("What is a balanced binary tree?");
+        qA.setTimeLimit(30);
+        qA.setMarks(10);
+        qA.setOrderIndex(0);
+        qA.setQuiz(quizA);
+
+        AnswerOption optA1 = new AnswerOption("A", "AVL Tree", true);
+        optA1.setQuestion(qA);
+        qA.setOptions(new ArrayList<>(List.of(optA1)));
+        quizA.setQuestions(new ArrayList<>(List.of(qA)));
+        quizA = quizRepository.save(quizA);
+
+        LiveSession sessionA = new LiveSession("123999", quizA);
+        sessionA = liveSessionRepository.save(sessionA);
+
+        Participant studentA = new Participant(sessionA, "123999", "student-real-01", "Real Student");
+        studentA = participantRepository.save(studentA);
+
+        Submission subA = new Submission();
+        subA.setLiveSession(sessionA);
+        subA.setParticipant(studentA);
+        subA.setQuestion(qA);
+        subA.setSelectedOption(optA1);
+        subA.setSelectedLabel("A");
+        subA.setIsCorrect(true);
+        subA.setMarksAwarded(10);
+        subA = submissionRepository.save(subA);
+
+        ExamIncident incidentA = new ExamIncident(sessionA, studentA, IncidentType.FULLSCREEN_EXIT, "Student minimized window");
+        incidentA = examIncidentRepository.save(incidentA);
+
+        // Quiz B: Test quiz without submissions
+        Quiz quizB = new Quiz("Disposable Throwaway Quiz");
+        quizB.setFacultyUsername("prof_test");
+        quizB.setExamStatus(ExamStatus.DRAFT);
+        quizB = quizRepository.save(quizB);
+
+        final Long quizAId = quizA.getId();
+        final Long quizBId = quizB.getId();
+        final Long subAId = subA.getId();
+        final Long incidentAId = incidentA.getId();
+
+        // Action: Delete Quiz B
+        assertDoesNotThrow(() -> {
+            quizService.deleteQuiz(quizBId);
+        });
+
+        // Verification: Quiz B is gone
+        assertFalse(quizRepository.existsById(quizBId), "Quiz B must be deleted");
+
+        // Verification: Quiz A and all associated records are 100% preserved
+        assertTrue(quizRepository.existsById(quizAId), "Quiz A must remain completely intact");
+        assertTrue(submissionRepository.existsById(subAId), "Quiz A's submission must remain untouched");
+        assertTrue(examIncidentRepository.existsById(incidentAId), "Quiz A's incident must remain untouched");
+        assertTrue(participantRepository.existsById(studentA.getId()), "Quiz A's student must remain untouched");
+        assertTrue(liveSessionRepository.existsById(sessionA.getId()), "Quiz A's session must remain untouched");
+
+        // Also verify Quiz A cannot be deleted because of its genuine submission
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> {
+            quizService.deleteQuiz(quizAId);
+        });
+        assertTrue(ex.getMessage().contains("genuine student submission(s)"));
     }
 }

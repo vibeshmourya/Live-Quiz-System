@@ -301,4 +301,233 @@ public class LiveExamSynchronizationAndReliabilityTest {
 
         pool.shutdown();
     }
+
+    @Test
+    @DisplayName("7. Answer Validation: Correct answer is evaluated properly and revealed with correct label (not null)")
+    void testCorrectAnswerEvaluationAndRevealIntegrity() {
+        // Create a dedicated quiz where Question 4 has option C as correct
+        Quiz testQuiz = new Quiz("Live Examination Verification Quiz");
+        testQuiz.setFacultyUsername("prof_eval");
+        testQuiz.setExamStatus(ExamStatus.SCHEDULED);
+        testQuiz.setShowCorrectAnswers(true);
+
+        Question q = new Question();
+        q.setQuestionText("Which OSI model layer handles end-to-end communication and flow control?");
+        q.setTimeLimit(30);
+        q.setMarks(10);
+        q.setOrderIndex(0);
+        q.setQuiz(testQuiz);
+
+        AnswerOption optA = new AnswerOption("A", "Network Layer", false);
+        optA.setQuestion(q);
+        AnswerOption optB = new AnswerOption("B", "Data Link Layer", false);
+        optB.setQuestion(q);
+        AnswerOption optC = new AnswerOption("C", "Transport Layer", true);
+        optC.setQuestion(q);
+        AnswerOption optD = new AnswerOption("D", "Session Layer", false);
+        optD.setQuestion(q);
+        q.setOptions(new ArrayList<>(List.of(optA, optB, optC, optD)));
+
+        testQuiz.setQuestions(new ArrayList<>(List.of(q)));
+        testQuiz = quizRepository.save(testQuiz);
+
+        LiveSession s = liveSessionService.createLiveSession(testQuiz.getId());
+        String pin = s.getPin();
+
+        // Register 3 candidates
+        Participant pCorrect = liveSessionService.joinSession(new JoinRequest(pin, "Alice", "cand-alice"));
+        liveSessionService.acknowledgeRules(pin, "cand-alice");
+        Participant pWrong = liveSessionService.joinSession(new JoinRequest(pin, "Bob", "cand-bob"));
+        liveSessionService.acknowledgeRules(pin, "cand-bob");
+        Participant pUnanswered = liveSessionService.joinSession(new JoinRequest(pin, "Charlie", "cand-charlie"));
+        liveSessionService.acknowledgeRules(pin, "cand-charlie");
+
+        // Faculty starts Question 0
+        liveSessionService.startQuestion(pin, 0);
+
+        // Alice submits C (correct)
+        SubmitAnswerRequest reqAlice = new SubmitAnswerRequest();
+        reqAlice.setSessionPin(pin);
+        reqAlice.setCandidateId(pCorrect.getCandidateId());
+        reqAlice.setQuestionId(q.getId());
+        reqAlice.setOptionLabel("C");
+        liveSessionService.submitAnswer(reqAlice);
+
+        // Bob submits B (incorrect)
+        SubmitAnswerRequest reqBob = new SubmitAnswerRequest();
+        reqBob.setSessionPin(pin);
+        reqBob.setCandidateId(pWrong.getCandidateId());
+        reqBob.setQuestionId(q.getId());
+        reqBob.setOptionLabel("B");
+        liveSessionService.submitAnswer(reqBob);
+
+        // Charlie submits nothing
+
+        // Faculty reveals answer
+        SessionStateResponse hostState = liveSessionService.revealAnswer(pin);
+        assertEquals(SessionStatus.QUESTION_REVEALED, hostState.getStatus());
+        assertEquals("C", hostState.getCorrectOptionLabel(), "Host must see C as the correct option");
+
+        // Verify Alice's state (Correct)
+        CandidateStateResponse aliceState = liveSessionService.getCandidateSessionState(pin, pCorrect.getCandidateId());
+        assertEquals("C", aliceState.getRevealedCorrectLabel(), "Alice must receive correct label C");
+        assertEquals("C", aliceState.getCorrectOptionLabel(), "Alice must receive correctOptionLabel alias C");
+        assertNotNull(aliceState.getRevealedCorrectLabel(), "revealedCorrectLabel must NEVER be null");
+        assertNotEquals("null", aliceState.getRevealedCorrectLabel(), "revealedCorrectLabel must not be string 'null'");
+        assertTrue(aliceState.isHasSubmitted(), "Alice must be recorded as submitted");
+        assertEquals("C", aliceState.getMySelectedLabel(), "Alice selected C");
+        assertEquals(Boolean.TRUE, aliceState.getWasCorrect(), "Alice wasCorrect must evaluate to true");
+
+        // Verify Bob's state (Incorrect)
+        CandidateStateResponse bobState = liveSessionService.getCandidateSessionState(pin, pWrong.getCandidateId());
+        assertEquals("C", bobState.getRevealedCorrectLabel(), "Bob must receive correct label C");
+        assertEquals("C", bobState.getCorrectOptionLabel(), "Bob must receive correctOptionLabel alias C");
+        assertTrue(bobState.isHasSubmitted());
+        assertEquals("B", bobState.getMySelectedLabel());
+        assertEquals(Boolean.FALSE, bobState.getWasCorrect(), "Bob wasCorrect must evaluate to false");
+
+        // Verify Charlie's state (Unanswered)
+        CandidateStateResponse charlieState = liveSessionService.getCandidateSessionState(pin, pUnanswered.getCandidateId());
+        assertEquals("C", charlieState.getRevealedCorrectLabel(), "Charlie must receive correct label C");
+        assertFalse(charlieState.isHasSubmitted());
+        assertNull(charlieState.getMySelectedLabel());
+        assertEquals(Boolean.FALSE, charlieState.getWasCorrect(), "Charlie wasCorrect must evaluate to false");
+    }
+
+    @Test
+    @DisplayName("8. Answer Reveal Resilience: When showCorrectAnswers is false or null, explicit faculty reveal must still deliver correct label")
+    void testRevealAnswerWhenQuizShowCorrectAnswersIsFalseOrNull() {
+        Quiz testQuiz = new Quiz("Exam with showCorrectAnswers disabled");
+        testQuiz.setFacultyUsername("prof_strict");
+        testQuiz.setExamStatus(ExamStatus.SCHEDULED);
+        testQuiz.setShowCorrectAnswers(false); // explicitly false
+
+        Question q = new Question();
+        q.setQuestionText("What is the time complexity of binary search?");
+        q.setTimeLimit(20);
+        q.setMarks(5);
+        q.setOrderIndex(0);
+        q.setQuiz(testQuiz);
+
+        AnswerOption optA = new AnswerOption("A", "O(n)", false);
+        optA.setQuestion(q);
+        AnswerOption optB = new AnswerOption("B", "O(log n)", true);
+        optB.setQuestion(q);
+        q.setOptions(new ArrayList<>(List.of(optA, optB)));
+
+        testQuiz.setQuestions(new ArrayList<>(List.of(q)));
+        testQuiz = quizRepository.save(testQuiz);
+
+        LiveSession s = liveSessionService.createLiveSession(testQuiz.getId());
+        String pin = s.getPin();
+
+        Participant cand = liveSessionService.joinSession(new JoinRequest(pin, "David", "cand-david"));
+        liveSessionService.acknowledgeRules(pin, "cand-david");
+        liveSessionService.startQuestion(pin, 0);
+
+        SubmitAnswerRequest req = new SubmitAnswerRequest();
+        req.setSessionPin(pin);
+        req.setCandidateId(cand.getCandidateId());
+        req.setQuestionId(q.getId());
+        req.setOptionLabel("B");
+        liveSessionService.submitAnswer(req);
+
+        // Faculty explicitly triggers revealAnswer
+        SessionStateResponse host = liveSessionService.revealAnswer(pin);
+        assertEquals("B", host.getCorrectOptionLabel());
+
+        // Even though quiz.showCorrectAnswers was false, faculty explicitly triggered revealAnswer,
+        // so candidate must receive "B" and wasCorrect=true (not null!)
+        CandidateStateResponse candState = liveSessionService.getCandidateSessionState(pin, cand.getCandidateId());
+        assertEquals("B", candState.getRevealedCorrectLabel(), "Candidate must receive 'B', never null");
+        assertEquals("B", candState.getCorrectOptionLabel(), "Candidate must receive correctOptionLabel 'B'");
+        assertEquals(Boolean.TRUE, candState.getWasCorrect(), "Candidate wasCorrect must evaluate to true");
+
+        // When quiz is ended and showCorrectAnswers is false, finished state must respect quiz setting and not expose correct answer
+        liveSessionService.endQuiz(pin);
+        CandidateStateResponse finishedState = liveSessionService.getCandidateSessionState(pin, cand.getCandidateId());
+        assertEquals(SessionStatus.FINISHED, finishedState.getStatus());
+        assertNull(finishedState.getRevealedCorrectLabel(), "When showCorrectAnswers is false, finished state must not expose revealedCorrectLabel");
+    }
+
+    @Test
+    @DisplayName("9. Multi-Candidate Distribution: 5 candidates submit answers to Question 4 and option counts are exact")
+    void testMultiCandidateOptionDistributionAndEvaluation() {
+        Quiz testQuiz = new Quiz("Five Candidate Examination");
+        testQuiz.setFacultyUsername("prof_multi");
+        testQuiz.setExamStatus(ExamStatus.SCHEDULED);
+
+        Question q = new Question();
+        q.setQuestionText("Which design pattern ensures a class has only one instance?");
+        q.setTimeLimit(25);
+        q.setMarks(10);
+        q.setOrderIndex(0);
+        q.setQuiz(testQuiz);
+
+        AnswerOption optA = new AnswerOption("A", "Factory", false);
+        optA.setQuestion(q);
+        AnswerOption optB = new AnswerOption("B", "Observer", false);
+        optB.setQuestion(q);
+        AnswerOption optC = new AnswerOption("C", "Singleton", true);
+        optC.setQuestion(q);
+        AnswerOption optD = new AnswerOption("D", "Adapter", false);
+        optD.setQuestion(q);
+        q.setOptions(new ArrayList<>(List.of(optA, optB, optC, optD)));
+
+        testQuiz.setQuestions(new ArrayList<>(List.of(q)));
+        testQuiz = quizRepository.save(testQuiz);
+
+        LiveSession s = liveSessionService.createLiveSession(testQuiz.getId());
+        String pin = s.getPin();
+
+        // 5 candidates
+        List<Participant> participants = new ArrayList<>();
+        for (int i = 1; i <= 5; i++) {
+            String cid = "c-" + i;
+            participants.add(liveSessionService.joinSession(new JoinRequest(pin, "Student " + i, cid)));
+            liveSessionService.acknowledgeRules(pin, cid);
+        }
+
+        liveSessionService.startQuestion(pin, 0);
+
+        // 3 vote for C (correct), 1 votes for A, 1 votes for B
+        String[] votes = {"C", "C", "C", "A", "B"};
+        for (int i = 0; i < 5; i++) {
+            SubmitAnswerRequest req = new SubmitAnswerRequest();
+            req.setSessionPin(pin);
+            req.setCandidateId(participants.get(i).getCandidateId());
+            req.setQuestionId(q.getId());
+            req.setOptionLabel(votes[i]);
+            liveSessionService.submitAnswer(req);
+        }
+
+        // Check stats
+        OptionStatsDto stats = liveSessionService.getOptionStats(s.getId(), q.getId());
+        assertEquals(5, stats.getTotalSubmissions());
+        assertEquals(3L, stats.getCounts().get("C"));
+        assertEquals(1L, stats.getCounts().get("A"));
+        assertEquals(1L, stats.getCounts().get("B"));
+        assertEquals(0L, stats.getCounts().get("D"));
+
+        // Faculty reveals answer
+        SessionStateResponse host = liveSessionService.revealAnswer(pin);
+        assertEquals("C", host.getCorrectOptionLabel());
+        assertEquals(60.0, host.getCorrectPercentage(), 0.01);
+
+        // Verify all 3 candidates who answered C have wasCorrect = true
+        for (int i = 0; i < 3; i++) {
+            CandidateStateResponse resp = liveSessionService.getCandidateSessionState(pin, participants.get(i).getCandidateId());
+            assertEquals("C", resp.getRevealedCorrectLabel());
+            assertEquals(Boolean.TRUE, resp.getWasCorrect(), "Candidate " + (i + 1) + " must evaluate to correct");
+        }
+
+        // Verify candidates 4 and 5 who answered A and B have wasCorrect = false
+        CandidateStateResponse respA = liveSessionService.getCandidateSessionState(pin, participants.get(3).getCandidateId());
+        assertEquals("C", respA.getRevealedCorrectLabel());
+        assertEquals(Boolean.FALSE, respA.getWasCorrect());
+
+        CandidateStateResponse respB = liveSessionService.getCandidateSessionState(pin, participants.get(4).getCandidateId());
+        assertEquals("C", respB.getRevealedCorrectLabel());
+        assertEquals(Boolean.FALSE, respB.getWasCorrect());
+    }
 }

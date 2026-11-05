@@ -18,6 +18,7 @@ public class CandidateStateResponse {
     private boolean allowReselection;
     private String mySelectedLabel;
     private String revealedCorrectLabel; // Only non-null if revealed or finished
+    private String correctOptionLabel;  // Alias for revealedCorrectLabel
     private Boolean wasCorrect;           // Only non-null if revealed or finished
     private int myScore;
     private Integer myRank;              // When finished
@@ -150,11 +151,25 @@ public class CandidateStateResponse {
     }
 
     public String getRevealedCorrectLabel() {
-        return revealedCorrectLabel;
+        return revealedCorrectLabel != null ? revealedCorrectLabel : correctOptionLabel;
     }
 
     public void setRevealedCorrectLabel(String revealedCorrectLabel) {
         this.revealedCorrectLabel = revealedCorrectLabel;
+        if (this.correctOptionLabel == null) {
+            this.correctOptionLabel = revealedCorrectLabel;
+        }
+    }
+
+    public String getCorrectOptionLabel() {
+        return correctOptionLabel != null ? correctOptionLabel : revealedCorrectLabel;
+    }
+
+    public void setCorrectOptionLabel(String correctOptionLabel) {
+        this.correctOptionLabel = correctOptionLabel;
+        if (this.revealedCorrectLabel == null) {
+            this.revealedCorrectLabel = correctOptionLabel;
+        }
     }
 
     public Boolean getWasCorrect() {

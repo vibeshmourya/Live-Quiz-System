@@ -326,11 +326,11 @@ public class LiveSessionService {
 
             OptionStatsDto stats = getOptionStats(session.getId(), currentQuestion.getId());
 
-            boolean showAnswers = Boolean.TRUE.equals(session.getQuiz().getShowCorrectAnswers());
             Map<String, Object> revealPayload = new HashMap<>();
             revealPayload.put("questionIndex", session.getCurrentQuestionIndex());
-            revealPayload.put("correctOptionLabel", showAnswers ? correctLabel : null);
-            revealPayload.put("showCorrectAnswers", showAnswers);
+            revealPayload.put("correctOptionLabel", correctLabel);
+            revealPayload.put("revealedCorrectLabel", correctLabel);
+            revealPayload.put("showCorrectAnswers", true);
             revealPayload.put("correctPercentage", Math.round(correctPercent * 10.0) / 10.0);
             revealPayload.put("counts", stats.getCounts());
             revealPayload.put("totalSubmissions", totalSubmissions);
@@ -534,7 +534,9 @@ public class LiveSessionService {
             resp.setRulesAcknowledged(Boolean.TRUE.equals(participant.getRulesAcknowledged()));
         }
 
-        boolean showCorrect = Boolean.TRUE.equals(session.getQuiz().getShowCorrectAnswers());
+        boolean showAnswersSetting = Boolean.TRUE.equals(session.getQuiz().getShowCorrectAnswers());
+        boolean isRevealedOrFinished = session.getStatus() == SessionStatus.QUESTION_REVEALED
+                || (session.getStatus() == SessionStatus.FINISHED && showAnswersSetting);
         if (session.getStatus() != SessionStatus.WAITING && session.getCurrentQuestionIndex() < session.getQuiz().getQuestions().size()) {
             Question currentQuestion = session.getQuiz().getQuestions().get(session.getCurrentQuestionIndex());
             resp.setCurrentQuestion(toCandidateQuestionDto(currentQuestion));
@@ -545,21 +547,25 @@ public class LiveSessionService {
                 if (sub.isPresent()) {
                     resp.setHasSubmitted(true);
                     resp.setMySelectedLabel(sub.get().getSelectedLabel());
-                    if ((session.getStatus() == SessionStatus.QUESTION_REVEALED || session.getStatus() == SessionStatus.FINISHED) && showCorrect) {
+                    if (isRevealedOrFinished) {
                         resp.setWasCorrect(sub.get().getIsCorrect());
                     }
                 } else {
                     resp.setHasSubmitted(false);
+                    if (isRevealedOrFinished) {
+                        resp.setWasCorrect(false);
+                    }
                 }
             }
 
-            if ((session.getStatus() == SessionStatus.QUESTION_REVEALED || session.getStatus() == SessionStatus.FINISHED) && showCorrect) {
+            if (isRevealedOrFinished) {
                 String correctLabel = currentQuestion.getOptions().stream()
                         .filter(AnswerOption::getIsCorrect)
                         .map(AnswerOption::getOptionLabel)
                         .findFirst()
                         .orElse("A");
                 resp.setRevealedCorrectLabel(correctLabel);
+                resp.setCorrectOptionLabel(correctLabel);
             }
         }
 

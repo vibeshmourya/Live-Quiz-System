@@ -33,6 +33,11 @@ public interface SubmissionRepository extends JpaRepository<Submission, Long> {
 
     long countByLiveSessionQuizId(Long quizId);
 
+    @Query("SELECT COUNT(s) FROM Submission s WHERE s.question.quiz.id = :quizId")
+    long countByQuestionQuizId(@Param("quizId") Long quizId);
+
+    long countByLiveSessionId(Long liveSessionId);
+
     @Query("SELECT s.selectedLabel, COUNT(s) FROM Submission s WHERE s.liveSession.id = :sessionId AND s.question.id = :questionId GROUP BY s.selectedLabel")
     List<Object[]> countBySelectedLabelForQuestion(@Param("sessionId") Long sessionId, @Param("questionId") Long questionId);
 }

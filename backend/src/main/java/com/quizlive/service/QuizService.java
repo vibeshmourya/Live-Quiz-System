@@ -4,8 +4,10 @@ import com.quizlive.dto.AnswerOptionDto;
 import com.quizlive.dto.QuestionDto;
 import com.quizlive.dto.QuizDto;
 import com.quizlive.model.AnswerOption;
+import com.quizlive.model.ExamIncident;
 import com.quizlive.model.ExamStatus;
 import com.quizlive.model.LiveSession;
+import com.quizlive.model.Participant;
 import com.quizlive.model.Question;
 import com.quizlive.model.Quiz;
 import com.quizlive.repository.ExamIncidentRepository;
@@ -376,24 +378,67 @@ public class QuizService {
     public void deleteQuiz(Long quizId) {
         Quiz quiz = quizRepository.findById(quizId)
                 .orElseThrow(() -> new IllegalArgumentException("Quiz not found with id: " + quizId));
+
         if (quiz.getExamStatus() == ExamStatus.LIVE) {
-            throw new IllegalStateException("Cannot delete an examination that is currently LIVE");
+            throw new IllegalStateException("Cannot delete an examination that is currently LIVE. Please conclude or end the live examination session first.");
         }
 
+        // 1. Inspect all related submission dependencies
+        long sessionSubmissions = submissionRepository.countByLiveSessionQuizId(quizId);
+        long questionSubmissions = submissionRepository.countByQuestionQuizId(quizId);
+        long totalSubmissions = Math.max(sessionSubmissions, questionSubmissions);
+
+        // 2. Block deletion if genuine student submissions exist
+        if (totalSubmissions > 0) {
+            throw new IllegalStateException("Cannot delete this examination because it contains " + totalSubmissions +
+                    " genuine student submission(s). Preserving student performance data is required for academic integrity.");
+        }
+
+        // 3. Inspect related sessions and verify ownership and relationships
         List<LiveSession> sessions = liveSessionRepository.findByQuizId(quizId);
-        boolean hasSubmissions = submissionRepository.existsByLiveSessionQuizId(quizId);
-        boolean hasParticipants = participantRepository.existsByLiveSessionQuizId(quizId);
-        boolean hasIncidents = examIncidentRepository.existsByLiveSessionQuizId(quizId);
 
-        if (hasSubmissions || hasParticipants || hasIncidents) {
-            throw new IllegalStateException("Cannot delete this examination because it contains historical examination records and student submissions. Preserving student performance data is required for academic integrity.");
+        for (LiveSession session : sessions) {
+            // Verify session ownership
+            if (!session.getQuiz().getId().equals(quizId)) {
+                throw new IllegalStateException("Data integrity error: Session " + session.getPin() + " does not belong to quiz " + quizId);
+            }
+
+            // Verify zero submissions for this specific session
+            long subsForSession = submissionRepository.countByLiveSessionId(session.getId());
+            if (subsForSession > 0) {
+                throw new IllegalStateException("Cannot delete examination: Session " + session.getPin() +
+                        " contains " + subsForSession + " student submission(s).");
+            }
+
+            // Inspect and clean up related test examination incidents
+            List<ExamIncident> incidents = examIncidentRepository.findByLiveSessionIdOrderByServerTimestampDesc(session.getId());
+            if (!incidents.isEmpty()) {
+                for (ExamIncident inc : incidents) {
+                    if (inc.getLiveSession() == null || !inc.getLiveSession().getId().equals(session.getId())) {
+                        throw new IllegalStateException("Data integrity error: Incident " + inc.getId() + " does not belong to session " + session.getId());
+                    }
+                }
+                examIncidentRepository.deleteAll(incidents);
+            }
+
+            // Inspect and clean up related test participants
+            List<Participant> participants = participantRepository.findByLiveSessionIdOrderByScoreDesc(session.getId());
+            if (!participants.isEmpty()) {
+                for (Participant p : participants) {
+                    if (p.getLiveSession() == null || !p.getLiveSession().getId().equals(session.getId())) {
+                        throw new IllegalStateException("Data integrity error: Participant " + p.getId() + " does not belong to session " + session.getId());
+                    }
+                }
+                participantRepository.deleteAll(participants);
+            }
+
+            // Delete the session shell
+            liveSessionRepository.delete(session);
         }
 
-        // Clean up empty/abandoned session shells with no student activity
-        if (!sessions.isEmpty()) {
-            liveSessionRepository.deleteAll(sessions);
-        }
+        liveSessionRepository.flush();
 
+        // 4. Delete the quiz (cleanly cascades to its own questions and answer options)
         quizRepository.delete(quiz);
     }
 

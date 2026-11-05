@@ -32,9 +32,15 @@ export default function CandidateQuizPage({
     document.mozFullScreenEnabled || 
     document.msFullscreenEnabled
   );
-  const [isFullscreen, setIsFullscreen] = useState(
-    typeof document !== 'undefined' ? Boolean(document.fullscreenElement) : false
-  );
+  const [isFullscreen, setIsFullscreen] = useState(() => {
+    if (typeof document === 'undefined') return false;
+    return Boolean(
+      document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.mozFullScreenElement ||
+      document.msFullscreenElement
+    );
+  });
   const [incidentCount, setIncidentCount] = useState(0);
   const [activeWarning, setActiveWarning] = useState(null);
   const lastIncidentTimeRef = useRef({});
@@ -128,10 +134,17 @@ export default function CandidateQuizPage({
   // Request fullscreen explicitly upon user interaction
   async function enterFullscreenMode() {
     try {
-      if (document.documentElement.requestFullscreen) {
-        await document.documentElement.requestFullscreen();
-        setIsFullscreen(true);
+      const el = document.documentElement;
+      if (el.requestFullscreen) {
+        await el.requestFullscreen();
+      } else if (el.webkitRequestFullscreen) {
+        await el.webkitRequestFullscreen();
+      } else if (el.mozRequestFullScreen) {
+        await el.mozRequestFullScreen();
+      } else if (el.msRequestFullscreen) {
+        await el.msRequestFullscreen();
       }
+      setIsFullscreen(true);
     } catch (err) {
       console.warn('Fullscreen request declined or unsupported:', err);
     }
@@ -144,7 +157,12 @@ export default function CandidateQuizPage({
     }
 
     function handleFullscreenChange() {
-      const currentlyFullscreen = Boolean(document.fullscreenElement);
+      const currentlyFullscreen = Boolean(
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.mozFullScreenElement ||
+        document.msFullscreenElement
+      );
       setIsFullscreen(currentlyFullscreen);
       if (state.requireFullscreen && !currentlyFullscreen) {
         triggerIncident('FULLSCREEN_EXIT', 'Student exited browser full-screen mode');
@@ -185,6 +203,9 @@ export default function CandidateQuizPage({
     }
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
     document.addEventListener('visibilitychange', handleVisibilityChange);
     document.addEventListener('copy', handleCopy);
     document.addEventListener('paste', handlePaste);
@@ -193,6 +214,9 @@ export default function CandidateQuizPage({
 
     return () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       document.removeEventListener('copy', handleCopy);
       document.removeEventListener('paste', handlePaste);
@@ -244,12 +268,15 @@ export default function CandidateQuizPage({
             if (payload.questionIndex !== undefined && payload.questionIndex < prev.currentQuestionIndex) {
               return prev; // guard against stale older question reveal
             }
-            const activeChoice = selectedLabelRef.current || prev.mySelectedLabel || (prev.currentQuestion?.id ? answersMapRef.current[prev.currentQuestion.id] : null);
+            const activeChoice = (selectedLabelRef.current || prev.mySelectedLabel || (prev.currentQuestion?.id ? answersMapRef.current[prev.currentQuestion.id] : null) || '').trim().toUpperCase();
+            const revealedCorrect = (payload.correctOptionLabel || payload.revealedCorrectLabel || '').trim().toUpperCase();
+            const isCorrect = Boolean(activeChoice && revealedCorrect && activeChoice === revealedCorrect);
             return {
               ...prev,
               status: 'QUESTION_REVEALED',
-              revealedCorrectLabel: payload.correctOptionLabel,
-              wasCorrect: Boolean(activeChoice && activeChoice === payload.correctOptionLabel),
+              revealedCorrectLabel: revealedCorrect,
+              correctOptionLabel: revealedCorrect,
+              wasCorrect: isCorrect,
             };
           });
         } else if (event.type === 'PARTICIPANT_JOINED') {
@@ -546,7 +573,10 @@ export default function CandidateQuizPage({
   const currentQ = state.currentQuestion;
   const isRevealed = state.status === 'QUESTION_REVEALED';
   const allowReselect = Boolean(state.allowReselection);
-  const hasSubmitted = state.hasSubmitted || !!selectedLabel;
+  const displayCorrectLabel = (state.revealedCorrectLabel || state.correctOptionLabel || '').trim().toUpperCase();
+  const candidateChoice = (selectedLabel || state.mySelectedLabel || (currentQ?.id ? answersMapRef.current[currentQ.id] : null) || '').trim().toUpperCase() || null;
+  const isStudentCorrect = state.wasCorrect === true || Boolean(candidateChoice && displayCorrectLabel && candidateChoice === displayCorrectLabel);
+  const hasSubmitted = state.hasSubmitted || !!selectedLabel || !!candidateChoice;
   const isLocked = hasSubmitted && !allowReselect;
   const isTimeUp = timerRemaining <= 0;
 
@@ -639,14 +669,15 @@ export default function CandidateQuizPage({
         {/* Four Large, Easy-to-Tap Answer Buttons */}
         <div className="space-y-3">
           {currentQ?.options?.map((opt) => {
-            const isSelected = selectedLabel === opt.optionLabel;
-            const isCorrect = isRevealed && opt.optionLabel === state.revealedCorrectLabel;
-            const isWrongSelection = isRevealed && isSelected && !isCorrect;
+            const optLabel = (opt.optionLabel || '').trim().toUpperCase();
+            const isSelected = candidateChoice === optLabel;
+            const isCorrectOption = isRevealed && displayCorrectLabel && optLabel === displayCorrectLabel;
+            const isWrongSelection = isRevealed && isSelected && !isCorrectOption;
 
             let buttonStyle = 'bg-white border-slate-200 text-slate-800 active:scale-[0.99]';
 
             if (isRevealed) {
-              if (isCorrect) {
+              if (isCorrectOption) {
                 buttonStyle = 'bg-emerald-500 text-white border-emerald-600 shadow-sm';
               } else if (isWrongSelection) {
                 buttonStyle = 'bg-red-500 text-white border-red-600';
@@ -672,7 +703,7 @@ export default function CandidateQuizPage({
               >
                 <span
                   className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm shrink-0 ${
-                    isSelected || (isRevealed && isCorrect)
+                    isSelected || isCorrectOption
                       ? 'bg-white/20 text-white'
                       : 'bg-slate-100 text-slate-700'
                   }`}
@@ -689,29 +720,29 @@ export default function CandidateQuizPage({
       </div>
 
       {/* Submission Status & Feedback */}
-      <div className="mt-6">
+      <div className="mt-6 shrink-0">
         {isRevealed ? (
           <div
             className={`p-4 rounded-xl text-center text-sm font-semibold border ${
-              selectedLabel === state.revealedCorrectLabel
+              isStudentCorrect
                 ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                : selectedLabel
-                ? `bg-red-50 border-red-200 text-red-800`
+                : candidateChoice
+                ? 'bg-red-50 border-red-200 text-red-800'
                 : 'bg-slate-100 border-slate-200 text-slate-700'
             }`}
           >
-            {selectedLabel === state.revealedCorrectLabel
+            {isStudentCorrect
               ? '✓ Correct! Well done.'
-              : selectedLabel
-              ? `✕ Incorrect. The correct answer was ${state.revealedCorrectLabel}.`
-              : `Time up! The correct answer was ${state.revealedCorrectLabel}.`}
+              : candidateChoice
+              ? `✕ Incorrect. The correct answer was ${displayCorrectLabel || 'N/A'}.`
+              : `Time up! The correct answer was ${displayCorrectLabel || 'N/A'}.`}
           </div>
         ) : hasSubmitted ? (
           <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl text-center text-xs font-medium text-indigo-900 shadow-xs">
             {allowReselect ? (
-              <span>✓ Submitted ({selectedLabel}). Reselection allowed: tap another option to change before time expires.</span>
+              <span>✓ Submitted ({candidateChoice || selectedLabel}). Reselection allowed: tap another option to change before time expires.</span>
             ) : (
-              <span>✓ Answer locked ({selectedLabel}). Waiting for timer to expire...</span>
+              <span>✓ Answer locked ({candidateChoice || selectedLabel}). Waiting for timer to expire...</span>
             )}
           </div>
         ) : isTimeUp ? (

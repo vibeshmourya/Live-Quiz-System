@@ -327,8 +327,11 @@ export default function CreateQuizPage({ onSessionCreated, onNavigate }) {
   async function handleDeleteQuiz(quizId, e) {
     e.stopPropagation();
     if (!window.confirm('Are you sure you want to delete this examination?')) return;
+    setError('');
+    setSuccessMessage('');
     try {
       await deleteQuiz(quizId);
+      setSuccessMessage('Examination deleted successfully.');
       loadQuizzes();
     } catch (err) {
       setError(err.message || 'Failed to delete examination');

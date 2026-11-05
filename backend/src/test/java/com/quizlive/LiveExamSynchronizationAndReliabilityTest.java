@@ -530,4 +530,131 @@ public class LiveExamSynchronizationAndReliabilityTest {
         assertEquals("C", respB.getRevealedCorrectLabel());
         assertEquals(Boolean.FALSE, respB.getWasCorrect());
     }
+
+    @Test
+    @DisplayName("10. Reproduction Question 3 Scenario: Unique Constraint prevents duplicate entries, 5 candidates, option A is authoritative correct, no candidate receives N/A or null")
+    void testExactReproductionQuestion3WithUniqueConstraint() {
+        Quiz testQuiz = new Quiz("Relational Database Examination");
+        testQuiz.setFacultyUsername("prof_db");
+        testQuiz.setExamStatus(ExamStatus.SCHEDULED);
+
+        // Create 4 questions so this is Question 3 of 4 (index 2)
+        List<Question> questions = new ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            Question q = new Question();
+            q.setTimeLimit(20);
+            q.setMarks(10);
+            q.setOrderIndex(i);
+            q.setQuiz(testQuiz);
+            if (i == 2) {
+                // Exact question from prompt
+                q.setQuestionText("In relational databases like MySQL, which key constraint prevents duplicate entries across defined columns?");
+                AnswerOption optA = new AnswerOption("A", "UNIQUE Constraint", true);
+                optA.setQuestion(q);
+                AnswerOption optB = new AnswerOption("B", "CHECK Constraint", false);
+                optB.setQuestion(q);
+                AnswerOption optC = new AnswerOption("C", "FOREIGN KEY Constraint", false);
+                optC.setQuestion(q);
+                AnswerOption optD = new AnswerOption("D", "DEFAULT Clause", false);
+                optD.setQuestion(q);
+                q.setOptions(new ArrayList<>(List.of(optA, optB, optC, optD)));
+            } else {
+                q.setQuestionText("Placeholder Question " + (i + 1));
+                AnswerOption optA = new AnswerOption("A", "Choice A", true);
+                optA.setQuestion(q);
+                AnswerOption optB = new AnswerOption("B", "Choice B", false);
+                optB.setQuestion(q);
+                q.setOptions(new ArrayList<>(List.of(optA, optB)));
+            }
+            questions.add(q);
+        }
+        testQuiz.setQuestions(questions);
+        testQuiz = quizRepository.save(testQuiz);
+
+        LiveSession session = liveSessionService.createLiveSession(testQuiz.getId());
+        String pin = session.getPin();
+
+        // 5 candidates join and acknowledge rules
+        List<Participant> candidates = new ArrayList<>();
+        for (int i = 1; i <= 5; i++) {
+            String cid = "cand-q3-" + i;
+            candidates.add(liveSessionService.joinSession(new JoinRequest(pin, "Student " + i, cid)));
+            liveSessionService.acknowledgeRules(pin, cid);
+        }
+
+        // Navigate to Question 3 (index 2)
+        liveSessionService.startQuestion(pin, 2);
+
+        // Candidate 1 selects Option A (Correct)
+        SubmitAnswerRequest req1 = new SubmitAnswerRequest();
+        req1.setSessionPin(pin);
+        req1.setCandidateId(candidates.get(0).getCandidateId());
+        req1.setQuestionId(questions.get(2).getId());
+        req1.setOptionLabel("A");
+        liveSessionService.submitAnswer(req1);
+
+        // Candidate 2 selects Option B (Incorrect)
+        SubmitAnswerRequest req2 = new SubmitAnswerRequest();
+        req2.setSessionPin(pin);
+        req2.setCandidateId(candidates.get(1).getCandidateId());
+        req2.setQuestionId(questions.get(2).getId());
+        req2.setOptionLabel("B");
+        liveSessionService.submitAnswer(req2);
+
+        // Candidate 3 selects Option D (Incorrect)
+        SubmitAnswerRequest req3 = new SubmitAnswerRequest();
+        req3.setSessionPin(pin);
+        req3.setCandidateId(candidates.get(2).getCandidateId());
+        req3.setQuestionId(questions.get(2).getId());
+        req3.setOptionLabel("D");
+        liveSessionService.submitAnswer(req3);
+
+        // Candidate 4 does not answer (unanswered / time up)
+
+        // Candidate 5 selects Option A (Correct), will simulate reload during reveal
+        SubmitAnswerRequest req5 = new SubmitAnswerRequest();
+        req5.setSessionPin(pin);
+        req5.setCandidateId(candidates.get(4).getCandidateId());
+        req5.setQuestionId(questions.get(2).getId());
+        req5.setOptionLabel("A");
+        liveSessionService.submitAnswer(req5);
+
+        // Faculty reveals answer
+        SessionStateResponse host = liveSessionService.revealAnswer(pin);
+        assertEquals("A", host.getCorrectOptionLabel(), "Host must authoritative know correct option is A");
+        assertEquals(50.0, host.getCorrectPercentage(), 0.01, "2 of 4 submissions correct = 50%");
+
+        // Verify Candidate 1: Selected A -> Must be evaluated as Correct, verdict true, revealed label "A"
+        CandidateStateResponse cand1State = liveSessionService.getCandidateSessionState(pin, candidates.get(0).getCandidateId());
+        assertEquals("A", cand1State.getRevealedCorrectLabel(), "Revealed label must be 'A', never null or N/A");
+        assertEquals("A", cand1State.getCorrectOptionLabel(), "Correct option label alias must be 'A'");
+        assertEquals("A", cand1State.getMySelectedLabel(), "Selected label must be 'A'");
+        assertEquals(Boolean.TRUE, cand1State.getWasCorrect(), "Candidate 1 must be marked correct");
+        assertTrue(cand1State.isHasSubmitted(), "Candidate 1 has submitted");
+
+        // Verify Candidate 2: Selected B -> Must be evaluated as Incorrect, verdict false, revealed label "A"
+        CandidateStateResponse cand2State = liveSessionService.getCandidateSessionState(pin, candidates.get(1).getCandidateId());
+        assertEquals("A", cand2State.getRevealedCorrectLabel());
+        assertEquals("B", cand2State.getMySelectedLabel());
+        assertEquals(Boolean.FALSE, cand2State.getWasCorrect(), "Candidate 2 selected B, so wasCorrect must be false");
+
+        // Verify Candidate 3: Selected D -> Must be evaluated as Incorrect, verdict false, revealed label "A"
+        CandidateStateResponse cand3State = liveSessionService.getCandidateSessionState(pin, candidates.get(2).getCandidateId());
+        assertEquals("A", cand3State.getRevealedCorrectLabel());
+        assertEquals("D", cand3State.getMySelectedLabel());
+        assertEquals(Boolean.FALSE, cand3State.getWasCorrect(), "Candidate 3 selected D, so wasCorrect must be false");
+
+        // Verify Candidate 4: Unanswered -> verdict false, hasSubmitted false, revealed label "A"
+        CandidateStateResponse cand4State = liveSessionService.getCandidateSessionState(pin, candidates.get(3).getCandidateId());
+        assertEquals("A", cand4State.getRevealedCorrectLabel());
+        assertNull(cand4State.getMySelectedLabel(), "Unanswered candidate has no selected label");
+        assertFalse(cand4State.isHasSubmitted(), "Unanswered candidate hasSubmitted must be false");
+        assertEquals(Boolean.FALSE, cand4State.getWasCorrect(), "Unanswered candidate wasCorrect must be false");
+
+        // Verify Candidate 5: Simulates page reload / reconnection after reveal -> restores state with wasCorrect=true and label "A"
+        CandidateStateResponse cand5Reloaded = liveSessionService.getCandidateSessionState(pin, candidates.get(4).getCandidateId().trim());
+        assertEquals("A", cand5Reloaded.getRevealedCorrectLabel(), "Candidate 5 reloaded must restore 'A'");
+        assertEquals("A", cand5Reloaded.getMySelectedLabel());
+        assertEquals(Boolean.TRUE, cand5Reloaded.getWasCorrect(), "Candidate 5 reloaded must evaluate to true");
+    }
 }

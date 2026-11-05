@@ -65,17 +65,52 @@ export default function CandidateQuizPage({
     try {
       setLoading(true);
       const data = await getCandidateState(pin, candidateId);
-      setState(data);
-      if (data.myIncidentCount !== undefined) {
+
+      setState((prev) => {
+        if (!data) return prev;
+
+        // Preserve client-cached answer if incoming data lacks it
+        const currentQId = data.currentQuestion?.id || prev?.currentQuestion?.id;
+        const cachedAnswer = currentQId ? answersMapRef.current[currentQId] : null;
+        const mySelected = data.mySelectedLabel || cachedAnswer || selectedLabelRef.current || prev?.mySelectedLabel || null;
+
+        // Authoritative correct label resolution:
+        // Use incoming label, or preserve already known revealed label
+        const resolvedCorrect = data.revealedCorrectLabel || data.correctOptionLabel || prev?.revealedCorrectLabel || prev?.correctOptionLabel || null;
+
+        // Authoritative correctness evaluation:
+        let resolvedWasCorrect = null;
+        if (data.status === 'QUESTION_REVEALED' || data.status === 'FINISHED') {
+          if (data.wasCorrect !== undefined && data.wasCorrect !== null) {
+            resolvedWasCorrect = Boolean(data.wasCorrect);
+          } else if (resolvedCorrect && mySelected) {
+            resolvedWasCorrect = resolvedCorrect.trim().toUpperCase() === mySelected.trim().toUpperCase();
+          } else if (prev?.wasCorrect !== undefined && prev?.wasCorrect !== null) {
+            resolvedWasCorrect = prev.wasCorrect;
+          }
+        }
+
+        return {
+          ...prev,
+          ...data,
+          mySelectedLabel: mySelected,
+          hasSubmitted: Boolean(data.hasSubmitted || mySelected),
+          revealedCorrectLabel: resolvedCorrect,
+          correctOptionLabel: resolvedCorrect,
+          wasCorrect: resolvedWasCorrect,
+        };
+      });
+
+      if (data?.myIncidentCount !== undefined) {
         setIncidentCount(data.myIncidentCount);
       }
-      if (data.hasSubmitted && data.mySelectedLabel) {
+      if (data?.hasSubmitted && data?.mySelectedLabel) {
         if (data.currentQuestion?.id) {
           answersMapRef.current[data.currentQuestion.id] = data.mySelectedLabel;
         }
         setSelectedLabel(data.mySelectedLabel);
       }
-      if (data.status === 'FINISHED') {
+      if (data?.status === 'FINISHED') {
         onFinished(data);
       }
     } catch (err) {
@@ -262,20 +297,32 @@ export default function CandidateQuizPage({
           });
           setSelectedLabel(previousAnswer || null);
         } else if (event.type === 'QUESTION_REVEALED') {
-          const payload = event.payload;
+          const payload = event.payload || {};
           setState((prev) => {
             if (!prev) return prev;
-            if (payload.questionIndex !== undefined && payload.questionIndex < prev.currentQuestionIndex) {
+            if (payload.questionIndex !== undefined && prev.currentQuestionIndex > payload.questionIndex) {
               return prev; // guard against stale older question reveal
             }
-            const activeChoice = (selectedLabelRef.current || prev.mySelectedLabel || (prev.currentQuestion?.id ? answersMapRef.current[prev.currentQuestion.id] : null) || '').trim().toUpperCase();
-            const revealedCorrect = (payload.correctOptionLabel || payload.revealedCorrectLabel || '').trim().toUpperCase();
-            const isCorrect = Boolean(activeChoice && revealedCorrect && activeChoice === revealedCorrect);
+            const currentQId = prev.currentQuestion?.id;
+            const activeChoice = (selectedLabelRef.current || prev.mySelectedLabel || (currentQId ? answersMapRef.current[currentQId] : null) || '').trim().toUpperCase();
+            const revealedCorrect = (payload.correctOptionLabel || payload.revealedCorrectLabel || payload.correctAnswer || prev.revealedCorrectLabel || prev.correctOptionLabel || '').trim().toUpperCase();
+
+            let isCorrect = null;
+            if (payload.wasCorrect !== undefined && payload.wasCorrect !== null) {
+              isCorrect = Boolean(payload.wasCorrect);
+            } else if (activeChoice && revealedCorrect) {
+              isCorrect = activeChoice === revealedCorrect;
+            } else if (prev.wasCorrect !== undefined && prev.wasCorrect !== null) {
+              isCorrect = prev.wasCorrect;
+            } else {
+              isCorrect = false;
+            }
+
             return {
               ...prev,
               status: 'QUESTION_REVEALED',
-              revealedCorrectLabel: revealedCorrect,
-              correctOptionLabel: revealedCorrect,
+              revealedCorrectLabel: revealedCorrect || prev.revealedCorrectLabel || null,
+              correctOptionLabel: revealedCorrect || prev.correctOptionLabel || null,
               wasCorrect: isCorrect,
             };
           });
@@ -671,8 +718,11 @@ export default function CandidateQuizPage({
           {currentQ?.options?.map((opt) => {
             const optLabel = (opt.optionLabel || '').trim().toUpperCase();
             const isSelected = candidateChoice === optLabel;
-            const isCorrectOption = isRevealed && displayCorrectLabel && optLabel === displayCorrectLabel;
-            const isWrongSelection = isRevealed && isSelected && !isCorrectOption;
+            const isCorrectOption = isRevealed && (
+              (displayCorrectLabel && optLabel === displayCorrectLabel) ||
+              (isStudentCorrect && isSelected)
+            );
+            const isWrongSelection = isRevealed && isSelected && !isCorrectOption && !isStudentCorrect;
 
             let buttonStyle = 'bg-white border-slate-200 text-slate-800 active:scale-[0.99]';
 
@@ -734,8 +784,12 @@ export default function CandidateQuizPage({
             {isStudentCorrect
               ? '✓ Correct! Well done.'
               : candidateChoice
-              ? `✕ Incorrect. The correct answer was ${displayCorrectLabel || 'N/A'}.`
-              : `Time up! The correct answer was ${displayCorrectLabel || 'N/A'}.`}
+              ? (displayCorrectLabel
+                  ? `✕ Incorrect. The correct answer was ${displayCorrectLabel}.`
+                  : `✕ Incorrect. Verification in progress...`)
+              : (displayCorrectLabel
+                  ? `Time up! The correct answer was ${displayCorrectLabel}.`
+                  : `Time up! Verification in progress...`)}
           </div>
         ) : hasSubmitted ? (
           <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl text-center text-xs font-medium text-indigo-900 shadow-xs">

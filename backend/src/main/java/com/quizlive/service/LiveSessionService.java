@@ -3,6 +3,8 @@ package com.quizlive.service;
 import com.quizlive.dto.*;
 import com.quizlive.model.*;
 import com.quizlive.repository.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +23,7 @@ public class LiveSessionService {
     private final ExamIncidentRepository examIncidentRepository;
     private final SimpMessagingTemplate messagingTemplate;
 
+    private static final Logger log = LoggerFactory.getLogger(LiveSessionService.class);
     private static final SecureRandom RANDOM = new SecureRandom();
 
     public LiveSessionService(
@@ -314,11 +317,7 @@ public class LiveSessionService {
             liveSessionRepository.save(session);
 
             Question currentQuestion = session.getQuiz().getQuestions().get(session.getCurrentQuestionIndex());
-            String correctLabel = currentQuestion.getOptions().stream()
-                    .filter(AnswerOption::getIsCorrect)
-                    .map(AnswerOption::getOptionLabel)
-                    .findFirst()
-                    .orElse("A");
+            String correctLabel = findAuthoritativeCorrectOptionLabel(currentQuestion);
 
             long totalSubmissions = submissionRepository.countByLiveSessionIdAndQuestionId(session.getId(), currentQuestion.getId());
             long correctSubmissions = submissionRepository.countByLiveSessionIdAndQuestionIdAndIsCorrectTrue(session.getId(), currentQuestion.getId());
@@ -328,13 +327,18 @@ public class LiveSessionService {
 
             Map<String, Object> revealPayload = new HashMap<>();
             revealPayload.put("questionIndex", session.getCurrentQuestionIndex());
+            revealPayload.put("questionId", currentQuestion.getId());
             revealPayload.put("correctOptionLabel", correctLabel);
             revealPayload.put("revealedCorrectLabel", correctLabel);
+            revealPayload.put("correctAnswer", correctLabel);
             revealPayload.put("showCorrectAnswers", true);
             revealPayload.put("correctPercentage", Math.round(correctPercent * 10.0) / 10.0);
             revealPayload.put("counts", stats.getCounts());
             revealPayload.put("totalSubmissions", totalSubmissions);
             revealPayload.put("stateVersion", ((long) session.getCurrentQuestionIndex() * 10L) + 5L);
+
+            log.info("[REVEAL_ANSWER] PIN={}, QuestionId={}, CorrectOption={}, TotalSubmissions={}, CorrectSubmissions={}",
+                    pin, currentQuestion.getId(), correctLabel, totalSubmissions, correctSubmissions);
 
             messagingTemplate.convertAndSend("/topic/session/" + pin,
                     new WsMessage("QUESTION_REVEALED", revealPayload));
@@ -475,11 +479,7 @@ public class LiveSessionService {
             resp.setOptionCounts(stats.getCounts());
 
             if (session.getStatus() == SessionStatus.QUESTION_REVEALED || session.getStatus() == SessionStatus.FINISHED) {
-                String correctLabel = currentQuestion.getOptions().stream()
-                        .filter(AnswerOption::getIsCorrect)
-                        .map(AnswerOption::getOptionLabel)
-                        .findFirst()
-                        .orElse("A");
+                String correctLabel = findAuthoritativeCorrectOptionLabel(currentQuestion);
                 resp.setCorrectOptionLabel(correctLabel);
 
                 long correctSubmissions = submissionRepository.countByLiveSessionIdAndQuestionIdAndIsCorrectTrue(session.getId(), currentQuestion.getId());
@@ -510,8 +510,10 @@ public class LiveSessionService {
         LiveSession session = liveSessionRepository.findByPin(pin)
                 .orElseThrow(() -> new IllegalArgumentException("Session not found: " + pin));
 
-        Participant participant = participantRepository.findBySessionPinAndCandidateId(pin, candidateId)
-                .orElse(null);
+        String safeCandidateId = candidateId != null ? candidateId.trim() : null;
+        Participant participant = safeCandidateId != null && !safeCandidateId.isEmpty()
+                ? participantRepository.findBySessionPinAndCandidateId(pin, safeCandidateId).orElse(null)
+                : null;
 
         CandidateStateResponse resp = new CandidateStateResponse();
         resp.setPin(session.getPin());
@@ -559,15 +561,15 @@ public class LiveSessionService {
             }
 
             if (isRevealedOrFinished) {
-                String correctLabel = currentQuestion.getOptions().stream()
-                        .filter(AnswerOption::getIsCorrect)
-                        .map(AnswerOption::getOptionLabel)
-                        .findFirst()
-                        .orElse("A");
+                String correctLabel = findAuthoritativeCorrectOptionLabel(currentQuestion);
                 resp.setRevealedCorrectLabel(correctLabel);
                 resp.setCorrectOptionLabel(correctLabel);
             }
         }
+
+        log.info("[CANDIDATE_STATE] PIN={}, CandidateId={}, Status={}, QuestionIndex={}, Selected={}, RevealedCorrect={}, WasCorrect={}",
+                pin, safeCandidateId, session.getStatus(), session.getCurrentQuestionIndex(),
+                resp.getMySelectedLabel(), resp.getRevealedCorrectLabel(), resp.getWasCorrect());
 
         resp.setQuestionStartedAtEpochMs(session.getQuestionStartedAtEpochMs());
         resp.setQuestionEndsAtEpochMs(session.getQuestionEndsAtEpochMs());
@@ -637,6 +639,23 @@ public class LiveSessionService {
             entries.add(new LeaderboardEntryDto(rank++, p.getNickname(), p.getScore(), p.getCandidateId()));
         }
         return entries;
+    }
+
+    private String findAuthoritativeCorrectOptionLabel(Question question) {
+        if (question == null || question.getOptions() == null) {
+            return null;
+        }
+        for (AnswerOption opt : question.getOptions()) {
+            if (Boolean.TRUE.equals(opt.getIsCorrect())) {
+                String label = opt.getOptionLabel();
+                if (label != null && !label.trim().isEmpty()) {
+                    return label.trim().toUpperCase();
+                }
+            }
+        }
+        log.warn("[DATA INTEGRITY WARNING] Question ID {} ('{}') has no option marked with isCorrect=true!",
+                question.getId(), question.getQuestionText());
+        return null;
     }
 
     private QuestionDto toQuestionDto(Question q) {

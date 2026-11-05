@@ -113,7 +113,7 @@ export default function HostLivePage({ pin, onEndQuiz, onNavigate }) {
               ? {
                   ...prev,
                   status: 'QUESTION_REVEALED',
-                  correctOptionLabel: event.payload.correctOptionLabel || event.payload.revealedCorrectLabel,
+                  correctOptionLabel: event.payload.correctOptionLabel || event.payload.revealedCorrectLabel || event.payload.correctAnswer,
                   correctPercentage: event.payload.correctPercentage,
                   optionCounts: event.payload.counts,
                   submissionCount: event.payload.totalSubmissions,

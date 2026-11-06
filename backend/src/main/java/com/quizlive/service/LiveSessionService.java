@@ -323,8 +323,34 @@ public class LiveSessionService {
             Question currentQuestion = session.getQuiz().getQuestions().get(session.getCurrentQuestionIndex());
             String correctLabel = findAuthoritativeCorrectOptionLabel(currentQuestion);
 
-            long totalSubmissions = submissionRepository.countByLiveSessionIdAndQuestionId(session.getId(), currentQuestion.getId());
-            long correctSubmissions = submissionRepository.countByLiveSessionIdAndQuestionIdAndIsCorrectTrue(session.getId(), currentQuestion.getId());
+            List<Submission> submissions = submissionRepository.findByLiveSessionIdAndQuestionId(session.getId(), currentQuestion.getId());
+            List<Participant> participants = participantRepository.findBySessionPinOrderByScoreDesc(session.getPin());
+
+            Map<String, Map<String, Object>> candidateVerdicts = new HashMap<>();
+            for (Participant p : participants) {
+                if (p.getCandidateId() != null) {
+                    Map<String, Object> v = new HashMap<>();
+                    v.put("candidateId", p.getCandidateId());
+                    v.put("hasSubmitted", false);
+                    v.put("selectedOptionLabel", null);
+                    v.put("wasCorrect", false);
+                    candidateVerdicts.put(p.getCandidateId(), v);
+                }
+            }
+
+            for (Submission sub : submissions) {
+                if (sub.getParticipant() != null && sub.getParticipant().getCandidateId() != null) {
+                    String cid = sub.getParticipant().getCandidateId();
+                    Map<String, Object> v = candidateVerdicts.computeIfAbsent(cid, k -> new HashMap<>());
+                    v.put("candidateId", cid);
+                    v.put("hasSubmitted", true);
+                    v.put("selectedOptionLabel", sub.getSelectedLabel());
+                    v.put("wasCorrect", Boolean.TRUE.equals(sub.getIsCorrect()));
+                }
+            }
+
+            long totalSubmissions = submissions.size();
+            long correctSubmissions = submissions.stream().filter(s -> Boolean.TRUE.equals(s.getIsCorrect())).count();
             double correctPercent = totalSubmissions > 0 ? ((double) correctSubmissions / totalSubmissions) * 100.0 : 0.0;
 
             OptionStatsDto stats = getOptionStats(session.getId(), currentQuestion.getId());
@@ -339,10 +365,11 @@ public class LiveSessionService {
             revealPayload.put("correctPercentage", Math.round(correctPercent * 10.0) / 10.0);
             revealPayload.put("counts", stats.getCounts());
             revealPayload.put("totalSubmissions", totalSubmissions);
+            revealPayload.put("candidateVerdicts", candidateVerdicts);
             revealPayload.put("stateVersion", ((long) session.getCurrentQuestionIndex() * 10L) + 5L);
 
-            log.info("[REVEAL_ANSWER] PIN={}, QuestionId={}, CorrectOption={}, TotalSubmissions={}, CorrectSubmissions={}, Destination={}",
-                    pin, currentQuestion.getId(), correctLabel, totalSubmissions, correctSubmissions, "/topic/session/" + pin);
+            log.info("[REVEAL_ANSWER] PIN={}, QuestionId={}, CorrectOption={}, TotalSubmissions={}, CorrectSubmissions={}, CandidateVerdicts={}, Destination={}",
+                    pin, currentQuestion.getId(), correctLabel, totalSubmissions, correctSubmissions, candidateVerdicts.size(), "/topic/session/" + pin);
 
             SessionStateResponse hostState = getHostSessionState(pin);
 
@@ -561,6 +588,8 @@ public class LiveSessionService {
                 || (session.getStatus() == SessionStatus.FINISHED && showAnswersSetting);
         if (session.getStatus() != SessionStatus.WAITING && session.getCurrentQuestionIndex() < session.getQuiz().getQuestions().size()) {
             Question currentQuestion = session.getQuiz().getQuestions().get(session.getCurrentQuestionIndex());
+            resp.setQuestionId(currentQuestion.getId());
+            resp.setQuestionIndex(session.getCurrentQuestionIndex());
             resp.setCurrentQuestion(toCandidateQuestionDto(currentQuestion));
 
             if (participant != null) {
@@ -569,12 +598,14 @@ public class LiveSessionService {
                 if (sub.isPresent()) {
                     resp.setHasSubmitted(true);
                     resp.setMySelectedLabel(sub.get().getSelectedLabel());
+                    resp.setSelectedOptionLabel(sub.get().getSelectedLabel());
                     if (isRevealedOrFinished) {
                         resp.setWasCorrect(sub.get().getIsCorrect());
                     }
                 } else {
                     resp.setHasSubmitted(false);
                     resp.setMySelectedLabel(null);
+                    resp.setSelectedOptionLabel(null);
                     if (isRevealedOrFinished) {
                         resp.setWasCorrect(false);
                     }
@@ -582,6 +613,7 @@ public class LiveSessionService {
             } else {
                 resp.setHasSubmitted(false);
                 resp.setMySelectedLabel(null);
+                resp.setSelectedOptionLabel(null);
                 if (isRevealedOrFinished) {
                     resp.setWasCorrect(false);
                 }

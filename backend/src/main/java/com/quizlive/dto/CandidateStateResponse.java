@@ -11,12 +11,14 @@ public class CandidateStateResponse {
     private int totalQuestions;
     private String nickname;
     private CandidateQuestionDto currentQuestion;
+    private Long questionId;
     private Long questionStartedAtEpochMs;
     private Long questionEndsAtEpochMs;
     private long remainingSeconds;
     private boolean hasSubmitted;
     private boolean allowReselection;
     private String mySelectedLabel;
+    private String selectedOptionLabel; // Alias for mySelectedLabel
     private String revealedCorrectLabel; // Only non-null if revealed or finished
     private String correctOptionLabel;  // Alias for revealedCorrectLabel
     private Boolean wasCorrect;           // Only non-null if revealed or finished
@@ -78,6 +80,22 @@ public class CandidateStateResponse {
 
     public void setStatus(SessionStatus status) {
         this.status = status;
+    }
+
+    public Long getQuestionId() {
+        return questionId != null ? questionId : (currentQuestion != null ? currentQuestion.getId() : null);
+    }
+
+    public void setQuestionId(Long questionId) {
+        this.questionId = questionId;
+    }
+
+    public int getQuestionIndex() {
+        return currentQuestionIndex;
+    }
+
+    public void setQuestionIndex(int questionIndex) {
+        this.currentQuestionIndex = questionIndex;
     }
 
     public int getCurrentQuestionIndex() {
@@ -153,11 +171,25 @@ public class CandidateStateResponse {
     }
 
     public String getMySelectedLabel() {
-        return mySelectedLabel;
+        return mySelectedLabel != null ? mySelectedLabel : selectedOptionLabel;
     }
 
     public void setMySelectedLabel(String mySelectedLabel) {
         this.mySelectedLabel = mySelectedLabel;
+        if (this.selectedOptionLabel == null) {
+            this.selectedOptionLabel = mySelectedLabel;
+        }
+    }
+
+    public String getSelectedOptionLabel() {
+        return selectedOptionLabel != null ? selectedOptionLabel : mySelectedLabel;
+    }
+
+    public void setSelectedOptionLabel(String selectedOptionLabel) {
+        this.selectedOptionLabel = selectedOptionLabel;
+        if (this.mySelectedLabel == null) {
+            this.mySelectedLabel = selectedOptionLabel;
+        }
     }
 
     public String getRevealedCorrectLabel() {

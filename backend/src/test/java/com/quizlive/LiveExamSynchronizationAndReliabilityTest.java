@@ -4,11 +4,13 @@ import com.quizlive.dto.*;
 import com.quizlive.model.*;
 import com.quizlive.repository.*;
 import com.quizlive.service.LiveSessionService;
+import com.quizlive.controller.LiveSessionController;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.ResponseEntity;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -22,6 +24,9 @@ public class LiveExamSynchronizationAndReliabilityTest {
 
     @Autowired
     private LiveSessionService liveSessionService;
+
+    @Autowired
+    private LiveSessionController liveSessionController;
 
     @Autowired
     private QuizRepository quizRepository;
@@ -887,8 +892,27 @@ public class LiveExamSynchronizationAndReliabilityTest {
         assertEquals("B", c1.getRevealedCorrectLabel(), "Candidate 1 revealed label must be 'B'");
         assertEquals("B", c1.getCorrectOptionLabel(), "Candidate 1 correct option label must be 'B'");
         assertEquals("B", c1.getMySelectedLabel(), "Candidate 1 selected label must be 'B'");
+        assertEquals("B", c1.getSelectedOptionLabel(), "Candidate 1 selected option label must be 'B'");
+        assertEquals(q1.getId(), c1.getQuestionId(), "Candidate 1 questionId must match q1 ID");
+        assertEquals(0, c1.getQuestionIndex(), "Candidate 1 questionIndex must be 0");
+        assertEquals(SessionStatus.QUESTION_REVEALED, c1.getStatus(), "Candidate 1 status must be QUESTION_REVEALED");
         assertTrue(c1.isHasSubmitted(), "Candidate 1 hasSubmitted must be true");
         assertEquals(Boolean.TRUE, c1.getWasCorrect(), "Candidate 1 selected B -> wasCorrect must be true");
+
+        // Verify Authoritative REST endpoint contract for Candidate 1
+        ResponseEntity<?> restC1 = liveSessionController.getCandidateState(pin, candidates.get(0).getCandidateId());
+        assertTrue(restC1.getStatusCode().is2xxSuccessful());
+        assertTrue(restC1.getBody() instanceof CandidateStateResponse);
+        CandidateStateResponse c1RestBody = (CandidateStateResponse) restC1.getBody();
+        assertEquals(q1.getId(), c1RestBody.getQuestionId());
+        assertEquals(0, c1RestBody.getQuestionIndex());
+        assertEquals("B", c1RestBody.getSelectedOptionLabel());
+        assertEquals("B", c1RestBody.getCorrectOptionLabel());
+        assertEquals("B", c1RestBody.getRevealedCorrectLabel());
+        assertTrue(c1RestBody.isHasSubmitted());
+        assertEquals(Boolean.TRUE, c1RestBody.getWasCorrect());
+        assertEquals(SessionStatus.QUESTION_REVEALED, c1RestBody.getStatus());
+        assertEquals(5L, c1RestBody.getStateVersion());
 
         // 2. Candidate 2: Selected A -> Incorrect, wasCorrect = false, revealedCorrectLabel = "B"
         CandidateStateResponse c2 = liveSessionService.getCandidateSessionState(pin, candidates.get(1).getCandidateId());
@@ -896,6 +920,10 @@ public class LiveExamSynchronizationAndReliabilityTest {
         assertEquals("B", c2.getRevealedCorrectLabel());
         assertEquals("B", c2.getCorrectOptionLabel());
         assertEquals("A", c2.getMySelectedLabel());
+        assertEquals("A", c2.getSelectedOptionLabel());
+        assertEquals(q1.getId(), c2.getQuestionId());
+        assertEquals(0, c2.getQuestionIndex());
+        assertEquals(SessionStatus.QUESTION_REVEALED, c2.getStatus());
         assertTrue(c2.isHasSubmitted());
         assertEquals(Boolean.FALSE, c2.getWasCorrect(), "Candidate 2 selected A -> wasCorrect must be false");
 
@@ -905,6 +933,10 @@ public class LiveExamSynchronizationAndReliabilityTest {
         assertEquals("B", c3.getRevealedCorrectLabel());
         assertEquals("B", c3.getCorrectOptionLabel());
         assertEquals("C", c3.getMySelectedLabel());
+        assertEquals("C", c3.getSelectedOptionLabel());
+        assertEquals(q1.getId(), c3.getQuestionId());
+        assertEquals(0, c3.getQuestionIndex());
+        assertEquals(SessionStatus.QUESTION_REVEALED, c3.getStatus());
         assertTrue(c3.isHasSubmitted());
         assertEquals(Boolean.FALSE, c3.getWasCorrect(), "Candidate 3 selected C -> wasCorrect must be false");
 
@@ -914,6 +946,10 @@ public class LiveExamSynchronizationAndReliabilityTest {
         assertEquals("B", c4.getRevealedCorrectLabel());
         assertEquals("B", c4.getCorrectOptionLabel());
         assertEquals("D", c4.getMySelectedLabel());
+        assertEquals("D", c4.getSelectedOptionLabel());
+        assertEquals(q1.getId(), c4.getQuestionId());
+        assertEquals(0, c4.getQuestionIndex());
+        assertEquals(SessionStatus.QUESTION_REVEALED, c4.getStatus());
         assertTrue(c4.isHasSubmitted());
         assertEquals(Boolean.FALSE, c4.getWasCorrect(), "Candidate 4 selected D -> wasCorrect must be false");
 
@@ -923,8 +959,23 @@ public class LiveExamSynchronizationAndReliabilityTest {
         assertEquals("B", c5.getRevealedCorrectLabel(), "Unanswered candidate revealed label must be 'B'");
         assertEquals("B", c5.getCorrectOptionLabel());
         assertNull(c5.getMySelectedLabel(), "Unanswered candidate has no selected label");
+        assertNull(c5.getSelectedOptionLabel(), "Unanswered candidate selectedOptionLabel must be null");
+        assertEquals(q1.getId(), c5.getQuestionId());
+        assertEquals(0, c5.getQuestionIndex());
+        assertEquals(SessionStatus.QUESTION_REVEALED, c5.getStatus());
         assertFalse(c5.isHasSubmitted(), "Unanswered candidate hasSubmitted must be false");
         assertEquals(Boolean.FALSE, c5.getWasCorrect(), "Unanswered candidate wasCorrect must be false, not null or stuck pending");
+
+        // Verify Authoritative REST endpoint contract for Unanswered Candidate 5
+        ResponseEntity<?> restC5 = liveSessionController.getCandidateState(pin, candidates.get(4).getCandidateId());
+        assertTrue(restC5.getStatusCode().is2xxSuccessful());
+        CandidateStateResponse c5RestBody = (CandidateStateResponse) restC5.getBody();
+        assertEquals(q1.getId(), c5RestBody.getQuestionId());
+        assertEquals(0, c5RestBody.getQuestionIndex());
+        assertNull(c5RestBody.getSelectedOptionLabel());
+        assertEquals("B", c5RestBody.getCorrectOptionLabel());
+        assertFalse(c5RestBody.isHasSubmitted());
+        assertEquals(SessionStatus.QUESTION_REVEALED, c5RestBody.getStatus());
 
         // Test Candidate Reload & Reconnect after reveal
         CandidateStateResponse c1Reload = liveSessionService.getCandidateSessionState(pin, candidates.get(0).getCandidateId().trim());

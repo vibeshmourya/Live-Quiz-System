@@ -43,26 +43,90 @@ public class ReportExportService {
         this.authService = authService;
     }
 
-    private LiveSession getAuthorizedSession(String pin, String authHeader) {
+    public LiveSession getAuthorizedSessionForFaculty(String pin, String authHeader) {
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required: Please sign in as faculty to access examination reports.");
+        }
         Faculty faculty = authService.validateFaculty(authHeader);
         LiveSession session = liveSessionRepository.findByPin(pin)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found with PIN: " + pin));
 
-        String owner = session.getQuiz().getFacultyUsername();
-        if (owner != null && !owner.trim().isEmpty() && !owner.equalsIgnoreCase(faculty.getUsername())) {
+        if (!isFacultyAuthorizedForQuiz(faculty, session.getQuiz())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied: You are not authorized to access reports for this examination.");
         }
         return session;
     }
 
+    public boolean isFacultyAuthorizedForQuiz(Faculty faculty, Quiz quiz) {
+        if (faculty == null || quiz == null) {
+            return false;
+        }
+        if ("ADMIN".equalsIgnoreCase(faculty.getRole())) {
+            return true;
+        }
+        String owner = quiz.getFacultyUsername();
+        if (owner == null || owner.trim().isEmpty() || "faculty".equalsIgnoreCase(owner.trim())) {
+            // Default, system-seeded, or unassigned examination is accessible to all verified faculty
+            return true;
+        }
+        String trimmedOwner = owner.trim();
+        if (trimmedOwner.equalsIgnoreCase(faculty.getUsername())) {
+            return true;
+        }
+        if (faculty.getEmail() != null && trimmedOwner.equalsIgnoreCase(faculty.getEmail().trim())) {
+            return true;
+        }
+        return false;
+    }
+
+    private LiveSession getAuthorizedSession(String pin, String authHeader) {
+        return getAuthorizedSessionForFaculty(pin, authHeader);
+    }
+
     // 1. INDIVIDUAL STUDENT REPORT (PDF)
     @Transactional(readOnly = true)
     public byte[] generateStudentReportPdf(String pin, String candidateId, String authHeader) {
-        LiveSession session = getAuthorizedSession(pin, authHeader);
+        return generateStudentReportPdf(pin, candidateId, authHeader, null);
+    }
+
+    @Transactional(readOnly = true)
+    public byte[] generateStudentReportPdf(String pin, String candidateId, String authHeader, String requesterCandidateId) {
+        LiveSession session = liveSessionRepository.findByPin(pin)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found with PIN: " + pin));
+
         Participant participant = participantRepository.findBySessionPinAndCandidateId(pin, candidateId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Participant not found with ID: " + candidateId));
 
         Quiz quiz = session.getQuiz();
+
+        // 1. Check Faculty Authentication if authHeader is provided
+        Faculty faculty = authService.getFacultyOptional(authHeader);
+        if (faculty != null) {
+            if (!isFacultyAuthorizedForQuiz(faculty, quiz)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied: You are not authorized to access reports for this examination.");
+            }
+            // Authorized faculty is permitted to access any student's report
+        } else {
+            // Check if invalid faculty token was provided without candidate ID
+            if (authHeader != null && authHeader.startsWith("Bearer ") && (requesterCandidateId == null || requesterCandidateId.trim().isEmpty())) {
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required: Please sign in as faculty to access examination reports.");
+            }
+
+            // 2. Student authorization
+            if (requesterCandidateId == null || requesterCandidateId.trim().isEmpty()) {
+                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Authentication required: Please provide candidate credentials or sign in as faculty.");
+            }
+
+            // Students may only access their own report
+            if (!requesterCandidateId.trim().equalsIgnoreCase(candidateId.trim())) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied: Students may only access their own examination report.");
+            }
+
+            // Check if examination results are officially published
+            if (Boolean.FALSE.equals(quiz.getResultsPublished())) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied: Examination results have not been published by the examiner.");
+            }
+        }
         int totalMarks = quiz.calculateTotalMarks();
         int studentScore = participant.getScore() != null ? participant.getScore() : 0;
         double percentage = totalMarks > 0 ? ((double) studentScore / totalMarks) * 100.0 : 0.0;

@@ -75,7 +75,8 @@ export default function ResultsPage({ results, isHost, onNavigate, candidateInfo
     try {
       setDownloading(true);
       setExportError('');
-      await downloadStudentPdf(pin, candidateId);
+      const requesterId = isCandidate ? (candidateInfo?.candidateId || candidateId) : null;
+      await downloadStudentPdf(pin, candidateId, requesterId);
     } catch (err) {
       setExportError(err.message || 'Failed to download student PDF');
     } finally {
@@ -149,6 +150,21 @@ export default function ResultsPage({ results, isHost, onNavigate, candidateInfo
               </span>
             </div>
           </div>
+
+          {(candidateInfo?.candidateId || results?.candidateId) && (
+            <div className="mt-5 pt-4 border-t border-slate-100 flex justify-center">
+              <button
+                id="download-my-report-btn"
+                type="button"
+                disabled={downloading}
+                onClick={() => handleDownloadStudentPdf(candidateInfo?.candidateId || results?.candidateId)}
+                className="py-2.5 px-4 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-xs font-semibold text-indigo-700 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                <span>📥</span>
+                <span>{downloading ? 'Downloading...' : 'Download My Score Report (PDF)'}</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -202,13 +218,13 @@ export default function ResultsPage({ results, isHost, onNavigate, candidateInfo
                       <span className="text-sm font-mono font-bold text-indigo-700">
                         {entry.score} pts
                       </span>
-                      {isHost && entry.candidateId && (
+                      {(isHost || (isMe && resultsPublished)) && entry.candidateId && (
                         <button
                           type="button"
                           disabled={downloading}
                           onClick={() => handleDownloadStudentPdf(entry.candidateId)}
                           className="text-[11px] font-medium text-slate-500 hover:text-indigo-600 hover:underline disabled:opacity-50"
-                          title="Download individual candidate PDF report"
+                          title={isHost ? "Download individual candidate PDF report" : "Download your PDF score report"}
                         >
                           PDF Report
                         </button>

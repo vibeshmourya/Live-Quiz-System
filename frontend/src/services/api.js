@@ -677,12 +677,13 @@ export async function updateResultPublication(quizId, resultsPublished) {
   return res.json();
 }
 
-async function downloadReportBlob(url, filename) {
+async function downloadReportBlob(url, filename, customHeaders = {}) {
   let res;
   try {
+    const headers = { ...getHeaders(false), ...customHeaders };
     res = await fetch(url, {
       method: 'GET',
-      headers: getHeaders(false),
+      headers,
     });
   } catch (err) {
     throw handleNetworkError(err, 'downloading report');
@@ -692,10 +693,13 @@ async function downloadReportBlob(url, filename) {
     throw new Error(errMsg);
   }
   const contentType = res.headers.get('content-type') || '';
-  if (contentType.includes('text/html')) {
-    throw new Error('API server returned an HTML error response instead of the requested report file.');
+  if (contentType.includes('text/html') || contentType.includes('application/json')) {
+    throw new Error('API server returned an invalid response instead of the requested report file.');
   }
   const blob = await res.blob();
+  if (blob.size === 0) {
+    throw new Error('Downloaded report is empty.');
+  }
   const downloadUrl = window.URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = downloadUrl;
@@ -714,8 +718,18 @@ export async function downloadExamCsv(pin) {
   return downloadReportBlob(`${API_BASE}/reports/exam/${pin}/csv`, `quizora-exam-${pin}-results.csv`);
 }
 
-export async function downloadStudentPdf(pin, candidateId) {
-  return downloadReportBlob(`${API_BASE}/reports/exam/${pin}/student/${candidateId}/pdf`, `quizora-student-${candidateId}-report.pdf`);
+export async function downloadStudentPdf(pin, candidateId, requesterCandidateId = null) {
+  const customHeaders = {};
+  const effectiveId = requesterCandidateId || candidateId;
+  if (effectiveId) {
+    customHeaders['X-Candidate-Id'] = effectiveId;
+  }
+  const queryParam = effectiveId ? `?requesterCandidateId=${encodeURIComponent(effectiveId)}` : '';
+  return downloadReportBlob(
+    `${API_BASE}/reports/exam/${pin}/student/${encodeURIComponent(candidateId)}/pdf${queryParam}`,
+    `quizora-student-${candidateId}-report.pdf`,
+    customHeaders
+  );
 }
 
 export async function downloadIncidentPdf(pin) {

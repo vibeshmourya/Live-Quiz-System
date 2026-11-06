@@ -20,9 +20,15 @@ public class ExportController {
     public ResponseEntity<byte[]> exportStudentReportPdf(
             @PathVariable String pin,
             @PathVariable String candidateId,
-            @RequestHeader(value = "Authorization", required = false) String authHeader
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-Candidate-Id", required = false) String candidateIdHeader,
+            @RequestParam(value = "requesterCandidateId", required = false) String requesterCandidateId
     ) {
-        byte[] pdfBytes = reportExportService.generateStudentReportPdf(pin, candidateId, authHeader);
+        String effectiveCandidateId = candidateIdHeader != null && !candidateIdHeader.trim().isEmpty()
+                ? candidateIdHeader.trim()
+                : requesterCandidateId;
+
+        byte[] pdfBytes = reportExportService.generateStudentReportPdf(pin, candidateId, authHeader, effectiveCandidateId);
         String filename = String.format("Quizora_Student_Report_%s_%s.pdf", pin, candidateId);
 
         return ResponseEntity.ok()

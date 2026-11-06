@@ -81,16 +81,16 @@ export default function CandidateQuizPage({
         const mySelected = data.mySelectedLabel || cachedAnswer || (isSameQuestion ? (selectedLabelRef.current || prev?.mySelectedLabel) : null) || null;
 
         // Authoritative correct label resolution:
-        // ONLY populated when question is revealed or session finished, and only preserved if same question
+        // ONLY populated when question is revealed or session finished, and preserved if same question
         let resolvedCorrect = null;
-        if (data.status === 'QUESTION_REVEALED' || data.status === 'FINISHED') {
+        if (data.status === 'QUESTION_REVEALED' || data.status === 'FINISHED' || (isSameQuestion && prev?.status === 'QUESTION_REVEALED')) {
           resolvedCorrect = data.revealedCorrectLabel || data.correctOptionLabel ||
             (isSameQuestion ? (prev?.revealedCorrectLabel || prev?.correctOptionLabel || null) : null);
         }
 
         // Authoritative correctness evaluation:
         let resolvedWasCorrect = null;
-        if (data.status === 'QUESTION_REVEALED' || data.status === 'FINISHED') {
+        if (data.status === 'QUESTION_REVEALED' || data.status === 'FINISHED' || (isSameQuestion && prev?.status === 'QUESTION_REVEALED')) {
           if (data.wasCorrect !== undefined && data.wasCorrect !== null) {
             resolvedWasCorrect = Boolean(data.wasCorrect);
           } else if (resolvedCorrect && mySelected) {
@@ -98,13 +98,19 @@ export default function CandidateQuizPage({
           } else if (isSameQuestion && prev?.wasCorrect !== undefined && prev?.wasCorrect !== null) {
             resolvedWasCorrect = prev.wasCorrect;
           } else {
-            resolvedWasCorrect = false;
+            resolvedWasCorrect = null;
           }
         }
+
+        // Guard against regressing status from QUESTION_REVEALED to QUESTION_ACTIVE for the same question
+        const effectiveStatus = (isSameQuestion && prev?.status === 'QUESTION_REVEALED' && data.status === 'QUESTION_ACTIVE')
+          ? 'QUESTION_REVEALED'
+          : data.status;
 
         return {
           ...prev,
           ...data,
+          status: effectiveStatus,
           mySelectedLabel: mySelected,
           hasSubmitted: Boolean(data.hasSubmitted || mySelected),
           revealedCorrectLabel: resolvedCorrect,
@@ -331,15 +337,15 @@ export default function CandidateQuizPage({
             } else if (prev.wasCorrect !== undefined && prev.wasCorrect !== null) {
               isCorrect = prev.wasCorrect;
             } else {
-              isCorrect = false;
+              isCorrect = null;
             }
 
             return {
               ...prev,
               status: 'QUESTION_REVEALED',
-              revealedCorrectLabel: revealedCorrect || null,
-              correctOptionLabel: revealedCorrect || null,
-              wasCorrect: isCorrect,
+              revealedCorrectLabel: revealedCorrect || (sameQuestion ? prev.revealedCorrectLabel : null) || null,
+              correctOptionLabel: revealedCorrect || (sameQuestion ? prev.correctOptionLabel : null) || null,
+              wasCorrect: isCorrect !== null ? isCorrect : (sameQuestion ? prev.wasCorrect : null),
             };
           });
         } else if (event.type === 'PARTICIPANT_JOINED') {
@@ -370,6 +376,13 @@ export default function CandidateQuizPage({
       unsubscribe();
     };
   }, [pin]);
+
+  // Auto-resolve revealed answer if state status is QUESTION_REVEALED but correct label is missing
+  useEffect(() => {
+    if (state?.status === 'QUESTION_REVEALED' && !state?.revealedCorrectLabel && !state?.correctOptionLabel) {
+      loadCandidateState();
+    }
+  }, [state?.status, state?.revealedCorrectLabel, state?.correctOptionLabel]);
 
   // Synchronized countdown timer
   useEffect(() => {
@@ -735,10 +748,10 @@ export default function CandidateQuizPage({
             const optLabel = (opt.optionLabel || '').trim().toUpperCase();
             const isSelected = candidateChoice === optLabel;
             const isCorrectOption = isRevealed && (
-              (displayCorrectLabel && optLabel === displayCorrectLabel) ||
+              Boolean(displayCorrectLabel && optLabel === displayCorrectLabel) ||
               (isStudentCorrect && isSelected)
             );
-            const isWrongSelection = isRevealed && isSelected && !isCorrectOption && !isStudentCorrect;
+            const isWrongSelection = isRevealed && isSelected && !isStudentCorrect && Boolean(displayCorrectLabel && optLabel !== displayCorrectLabel);
 
             let buttonStyle = 'bg-white border-slate-200 text-slate-800 active:scale-[0.99]';
 
@@ -792,20 +805,20 @@ export default function CandidateQuizPage({
             className={`p-4 rounded-xl text-center text-sm font-semibold border ${
               isStudentCorrect
                 ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                : candidateChoice
-                ? 'bg-red-50 border-red-200 text-red-800'
+                : displayCorrectLabel
+                ? (candidateChoice
+                    ? 'bg-red-50 border-red-200 text-red-800'
+                    : 'bg-slate-100 border-slate-200 text-slate-700')
                 : 'bg-slate-100 border-slate-200 text-slate-700'
             }`}
           >
             {isStudentCorrect
               ? '✓ Correct! Well done.'
-              : candidateChoice
-              ? (displayCorrectLabel
+              : displayCorrectLabel
+              ? (candidateChoice
                   ? `✕ Incorrect. The correct answer was ${displayCorrectLabel}.`
-                  : `✕ Incorrect. Verification in progress...`)
-              : (displayCorrectLabel
-                  ? `Time up! The correct answer was ${displayCorrectLabel}.`
-                  : `Time up! Verification in progress...`)}
+                  : `Time up! The correct answer was ${displayCorrectLabel}.`)
+              : 'Verifying results with examination server...'}
           </div>
         ) : hasSubmitted ? (
           <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl text-center text-xs font-medium text-indigo-900 shadow-xs">

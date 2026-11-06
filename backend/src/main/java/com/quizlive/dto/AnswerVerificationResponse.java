@@ -4,6 +4,7 @@ import java.time.LocalDateTime;
 
 public class AnswerVerificationResponse {
     private boolean success;
+    private boolean submitted = true;
     private boolean verified;
     private Long questionId;
     private Long selectedOptionId;
@@ -38,6 +39,14 @@ public class AnswerVerificationResponse {
 
     public void setSuccess(boolean success) {
         this.success = success;
+    }
+
+    public boolean isSubmitted() {
+        return submitted;
+    }
+
+    public void setSubmitted(boolean submitted) {
+        this.submitted = submitted;
     }
 
     public boolean isVerified() {

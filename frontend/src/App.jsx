@@ -143,6 +143,13 @@ export default function App() {
     setScreen('results');
   }
 
+  function handleViewSavedResults(pin) {
+    setActivePin(pin);
+    setIsHost(true);
+    setFinalResults(null);
+    setScreen('results');
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900">
       <Navbar
@@ -160,6 +167,7 @@ export default function App() {
       {screen === 'create' && (
         <CreateQuizPage
           onSessionCreated={handleSessionCreated}
+          onViewResults={handleViewSavedResults}
           onNavigate={handleNavigate}
         />
       )}

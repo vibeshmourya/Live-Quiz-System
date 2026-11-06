@@ -391,16 +391,14 @@ export default function CandidateQuizPage({
       },
       candidateId,
       (candEvent) => {
-        if (candEvent.type === 'ANSWER_VERIFIED') {
+        if (candEvent.type === 'ANSWER_SUBMITTED' || candEvent.type === 'ANSWER_VERIFIED') {
           const p = candEvent.payload || {};
           const currentQId = stateRef.current?.currentQuestion?.id;
           if (p.questionId && currentQId && p.questionId === currentQId) {
-            const isCorrect = Boolean(p.isCorrect);
-            setSubmissionStatus(isCorrect ? 'VERIFIED_CORRECT' : 'VERIFIED_INCORRECT');
+            setSubmissionStatus('SUBMITTED');
             if (p.submittedLabel) setSelectedLabel(p.submittedLabel);
             answersMapRef.current[p.questionId] = {
               label: p.submittedLabel,
-              isCorrect: isCorrect,
               optionId: p.selectedOptionId,
             };
             setState((prev) => ({
@@ -408,7 +406,6 @@ export default function CandidateQuizPage({
               hasSubmitted: true,
               mySelectedLabel: p.submittedLabel || prev.mySelectedLabel,
               mySelectedOptionId: p.selectedOptionId || prev.mySelectedOptionId,
-              wasCorrect: isCorrect,
             }));
           }
         }
@@ -469,35 +466,28 @@ export default function CandidateQuizPage({
         optionLabel: label,
       });
 
-      const isCorrect = res && res.verified ? Boolean(res.isCorrect) : null;
       const canonicalOptId = (res && res.selectedOptionId) || optId;
       const submittedLbl = (res && res.submittedLabel) || label;
 
       if (state.currentQuestion?.id) {
         answersMapRef.current[state.currentQuestion.id] = {
           label: submittedLbl,
-          isCorrect: isCorrect,
           optionId: canonicalOptId,
         };
       }
 
-      if (isCorrect !== null) {
-        setSubmissionStatus(isCorrect ? 'VERIFIED_CORRECT' : 'VERIFIED_INCORRECT');
-      } else {
-        setSubmissionStatus('IDLE');
-      }
+      setSubmissionStatus('SUBMITTED');
 
       setState((prev) => ({
         ...prev,
         hasSubmitted: true,
         mySelectedLabel: submittedLbl,
         mySelectedOptionId: canonicalOptId,
-        wasCorrect: isCorrect,
       }));
     } catch (err) {
       setError(err.message || 'Unable to submit answer. Please try again.');
       setSelectedLabel(prevLabel);
-      setSubmissionStatus(prevStatus === 'SUBMITTING' ? 'ERROR' : prevStatus);
+      setSubmissionStatus('SUBMISSION_FAILED');
     } finally {
       setIsSubmitting(false);
     }
@@ -886,15 +876,19 @@ export default function CandidateQuizPage({
         ) : isSubmitting || submissionStatus === 'SUBMITTING' ? (
           <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl text-center text-xs font-medium text-indigo-900 shadow-xs flex items-center justify-center gap-2">
             <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-indigo-600 border-t-transparent rounded-full"></span>
-            <span>Verifying and recording your answer...</span>
+            <span>Submitting your answer...</span>
           </div>
-        ) : hasSubmitted ? (
+        ) : hasSubmitted || submissionStatus === 'SUBMITTED' ? (
           <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl text-center text-xs font-medium text-indigo-900 shadow-xs">
             {allowReselect ? (
-              <span>✓ Submitted ({candidateChoice || selectedLabel}). Reselection allowed: tap another option to change before time expires.</span>
+              <span>✓ Answer submitted successfully ({candidateChoice || selectedLabel}). Reselection allowed: tap another option to change before time expires.</span>
             ) : (
-              <span>✓ Answer locked ({candidateChoice || selectedLabel}). Waiting for timer to expire...</span>
+              <span>✓ Answer submitted successfully ({candidateChoice || selectedLabel}). Locked in for evaluation.</span>
             )}
+          </div>
+        ) : submissionStatus === 'SUBMISSION_FAILED' ? (
+          <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-center text-xs font-medium text-red-800">
+            <span>Submission failed. Tap an option to retry.</span>
           </div>
         ) : isTimeUp ? (
           <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-center text-xs font-medium text-amber-800">

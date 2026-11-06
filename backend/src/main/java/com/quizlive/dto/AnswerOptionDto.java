@@ -1,5 +1,8 @@
 package com.quizlive.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public class AnswerOptionDto {
     private Long id;
     private String optionLabel;

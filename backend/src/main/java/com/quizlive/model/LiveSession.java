@@ -33,6 +33,9 @@ public class LiveSession {
     @Column(nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 
+    @Column
+    private LocalDateTime completedAt;
+
     @OneToMany(mappedBy = "liveSession", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     private List<Participant> participants = new ArrayList<>();
 
@@ -108,6 +111,14 @@ public class LiveSession {
 
     public void setCreatedAt(LocalDateTime createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public LocalDateTime getCompletedAt() {
+        return completedAt;
+    }
+
+    public void setCompletedAt(LocalDateTime completedAt) {
+        this.completedAt = completedAt;
     }
 
     public List<Participant> getParticipants() {

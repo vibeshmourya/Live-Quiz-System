@@ -736,3 +736,37 @@ export async function downloadIncidentPdf(pin) {
   return downloadReportBlob(`${API_BASE}/reports/exam/${pin}/incidents/pdf`, `quizora-exam-${pin}-incidents.pdf`);
 }
 
+export async function fetchQuizHistory(quizId) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/sessions/quiz/${quizId}/history`, {
+      method: 'GET',
+      headers: getHeaders(false),
+    });
+  } catch (err) {
+    throw handleNetworkError(err, 'fetching examination history');
+  }
+  if (!res.ok) {
+    const errMsg = await parseErrorResponse(res, 'Failed to fetch examination history');
+    throw new Error(errMsg);
+  }
+  return res.json();
+}
+
+export async function fetchSessionResults(pin) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/sessions/${pin}/results`, {
+      method: 'GET',
+      headers: getHeaders(false),
+    });
+  } catch (err) {
+    throw handleNetworkError(err, 'fetching examination results');
+  }
+  if (!res.ok) {
+    const errMsg = await parseErrorResponse(res, 'Failed to fetch examination results');
+    throw new Error(errMsg);
+  }
+  return res.json();
+}
+

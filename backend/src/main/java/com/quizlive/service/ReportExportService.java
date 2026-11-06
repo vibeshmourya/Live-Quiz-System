@@ -272,6 +272,32 @@ public class ReportExportService {
         List<Participant> participants = participantRepository.findByLiveSessionIdOrderByScoreDesc(session.getId());
         int totalMarks = quiz.calculateTotalMarks();
 
+        // Deterministic ranking tie-break: descending score, then earlier joined, then lower participant ID
+        participants.sort((p1, p2) -> {
+            int s1 = p1.getScore() != null ? p1.getScore() : 0;
+            int s2 = p2.getScore() != null ? p2.getScore() : 0;
+            if (s1 != s2) return Integer.compare(s2, s1);
+            if (p1.getJoinedAt() != null && p2.getJoinedAt() != null && !p1.getJoinedAt().equals(p2.getJoinedAt())) {
+                return p1.getJoinedAt().compareTo(p2.getJoinedAt());
+            }
+            if (p1.getId() != null && p2.getId() != null) {
+                return p1.getId().compareTo(p2.getId());
+            }
+            return 0;
+        });
+
+        int highestScore = 0;
+        int lowestScore = totalMarks;
+        double scoreSum = 0;
+        for (Participant p : participants) {
+            int score = p.getScore() != null ? p.getScore() : 0;
+            if (score > highestScore) highestScore = score;
+            if (score < lowestScore) lowestScore = score;
+            scoreSum += score;
+        }
+        if (participants.isEmpty()) lowestScore = 0;
+        double averageScore = !participants.isEmpty() ? (scoreSum / participants.size()) : 0.0;
+
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Document document = new Document(PageSize.A4, 36, 36, 40, 40);
 
@@ -289,32 +315,51 @@ public class ReportExportService {
             header.setAlignment(Element.ALIGN_CENTER);
             document.add(header);
 
-            Paragraph docType = new Paragraph("Official Examination Results Roster", subTitleFont);
+            Paragraph docType = new Paragraph("Final Examination Report & Scorecard Roster", subTitleFont);
             docType.setAlignment(Element.ALIGN_CENTER);
             docType.setSpacingAfter(15);
             document.add(docType);
 
-            // Overview Table
-            PdfPTable metaTable = new PdfPTable(2);
+            // Examination Summary Block
+            PdfPTable metaTable = new PdfPTable(4);
             metaTable.setWidthPercentage(100);
+            metaTable.setWidths(new float[]{25, 25, 25, 25});
             metaTable.setSpacingAfter(15);
 
             addTableCell(metaTable, "Examination Title:", boldFont, true);
             addTableCell(metaTable, sanitizeText(quiz.getTitle()), normalFont, false);
+            addTableCell(metaTable, "Session PIN / ID:", boldFont, true);
+            addTableCell(metaTable, session.getPin(), normalFont, false);
 
-            addTableCell(metaTable, "Session PIN / Date:", boldFont, true);
-            addTableCell(metaTable, session.getPin() + " | " + session.getCreatedAt().format(DATE_FORMATTER), normalFont, false);
+            addTableCell(metaTable, "Examination Date:", boldFont, true);
+            addTableCell(metaTable, session.getCreatedAt().format(DATE_FORMATTER), normalFont, false);
+            addTableCell(metaTable, "Completion Status:", boldFont, true);
+            addTableCell(metaTable, session.getStatus().name(), boldFont, false);
 
             addTableCell(metaTable, "Faculty Controller:", boldFont, true);
             addTableCell(metaTable, sanitizeText(quiz.getFacultyUsername() != null ? quiz.getFacultyUsername() : "Faculty"), normalFont, false);
-
-            addTableCell(metaTable, "Total Candidates Enrolled:", boldFont, true);
+            addTableCell(metaTable, "Total Enrolled Candidates:", boldFont, true);
             addTableCell(metaTable, String.valueOf(participants.size()), normalFont, false);
+
+            addTableCell(metaTable, "Total Questions:", boldFont, true);
+            addTableCell(metaTable, String.valueOf(quiz.getQuestions() != null ? quiz.getQuestions().size() : 0), normalFont, false);
+            addTableCell(metaTable, "Maximum Examination Marks:", boldFont, true);
+            addTableCell(metaTable, String.valueOf(totalMarks), normalFont, false);
+
+            addTableCell(metaTable, "Highest Score Achieved:", boldFont, true);
+            addTableCell(metaTable, highestScore + " / " + totalMarks, normalFont, false);
+            addTableCell(metaTable, "Lowest Score Achieved:", boldFont, true);
+            addTableCell(metaTable, lowestScore + " / " + totalMarks, normalFont, false);
+
+            addTableCell(metaTable, "Average Candidate Score:", boldFont, true);
+            addTableCell(metaTable, String.format("%.1f / %d (%.1f%%)", averageScore, totalMarks, totalMarks > 0 ? (averageScore / totalMarks) * 100.0 : 0.0), normalFont, false);
+            addTableCell(metaTable, "Academic Report Hash:", boldFont, true);
+            addTableCell(metaTable, String.format("REV-%X", Math.abs((session.getPin() + session.getId()).hashCode())), normalFont, false);
 
             document.add(metaTable);
 
             // Ranked Roster Table
-            Paragraph rosterTitle = new Paragraph("STUDENT SCORECARD & RANKINGS", sectionFont);
+            Paragraph rosterTitle = new Paragraph("OFFICIAL CANDIDATE EXAMINATION ROSTER", sectionFont);
             rosterTitle.setSpacingAfter(8);
             document.add(rosterTitle);
 
@@ -322,9 +367,11 @@ public class ReportExportService {
             table.setWidthPercentage(100);
             table.setWidths(new float[]{10, 30, 15, 15, 15, 15});
             table.setSpacingAfter(15);
+            // Repeat table header across all pages for multi-page reports
+            table.setHeaderRows(1);
 
             addHeaderCell(table, "Rank");
-            addHeaderCell(table, "Student Display Name");
+            addHeaderCell(table, "Candidate Name");
             addHeaderCell(table, "Marks");
             addHeaderCell(table, "Percentage");
             addHeaderCell(table, "Grade");
@@ -346,7 +393,7 @@ public class ReportExportService {
 
             document.add(table);
 
-            Paragraph footer = new Paragraph("Generated by Quizora Secure Examination System • Confidential", subTitleFont);
+            Paragraph footer = new Paragraph("Generated by Quizora Secure Examination System • Official Academic Record", subTitleFont);
             footer.setAlignment(Element.ALIGN_CENTER);
             footer.setSpacingBefore(15);
             document.add(footer);

@@ -8,13 +8,20 @@ import {
   getQuizPreview,
   deleteQuiz,
   duplicateQuiz,
+  fetchQuizHistory,
+  downloadExamPdf,
 } from '../services/api';
 import ExamPreviewModal from '../components/ExamPreviewModal';
 
-export default function CreateQuizPage({ onSessionCreated, onNavigate }) {
+export default function CreateQuizPage({ onSessionCreated, onViewResults, onNavigate }) {
   const [existingQuizzes, setExistingQuizzes] = useState([]);
   const [loadingQuizzes, setLoadingQuizzes] = useState(true);
   const [activeTab, setActiveTab] = useState('new'); // 'new' or 'existing'
+
+  // Examination History State
+  const [expandedHistoryQuizId, setExpandedHistoryQuizId] = useState(null);
+  const [quizHistoryMap, setQuizHistoryMap] = useState({});
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Quiz Editor State
   const [editingQuizId, setEditingQuizId] = useState(null);
@@ -59,6 +66,25 @@ export default function CreateQuizPage({ onSessionCreated, onNavigate }) {
       console.error(err);
     } finally {
       setLoadingQuizzes(false);
+    }
+  }
+
+  async function toggleQuizHistory(quizId) {
+    if (expandedHistoryQuizId === quizId) {
+      setExpandedHistoryQuizId(null);
+      return;
+    }
+    setExpandedHistoryQuizId(quizId);
+    if (!quizHistoryMap[quizId]) {
+      try {
+        setLoadingHistory(true);
+        const data = await fetchQuizHistory(quizId);
+        setQuizHistoryMap((prev) => ({ ...prev, [quizId]: data || [] }));
+      } catch (err) {
+        console.error('Failed to load quiz examination history:', err);
+      } finally {
+        setLoadingHistory(false);
+      }
     }
   }
 
@@ -436,82 +462,176 @@ export default function CreateQuizPage({ onSessionCreated, onNavigate }) {
             existingQuizzes.map((quiz) => (
               <div
                 key={quiz.id}
-                className="bg-white border border-slate-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs"
+                className="bg-white border border-slate-200 rounded-lg p-4 shadow-xs"
               >
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-semibold text-slate-900">{quiz.title}</h3>
-                    <span
-                      className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                        quiz.examStatus === 'DRAFT'
-                          ? 'bg-amber-100 text-amber-800'
-                          : quiz.examStatus === 'SCHEDULED'
-                          ? 'bg-blue-100 text-blue-800'
-                          : quiz.examStatus === 'LIVE'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-slate-100 text-slate-700'
-                      }`}
-                    >
-                      {quiz.examStatus || 'DRAFT'}
-                    </span>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold text-slate-900">{quiz.title}</h3>
+                      <span
+                        className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                          quiz.examStatus === 'DRAFT'
+                            ? 'bg-amber-100 text-amber-800'
+                            : quiz.examStatus === 'SCHEDULED'
+                            ? 'bg-blue-100 text-blue-800'
+                            : quiz.examStatus === 'LIVE'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        {quiz.examStatus || 'DRAFT'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {quiz.questionCount || (quiz.questions ? quiz.questions.length : 0)} Questions
+                      {' • '}
+                      <span className="font-semibold text-slate-700">
+                        {quiz.totalMarks || 0} Total Marks
+                      </span>
+                      {' • '}
+                      <span className="text-indigo-600 font-medium">
+                        {quiz.answerChangePolicy === 'ALLOW_RESELECTION' ? 'Allow Reselection' : 'Single Selection'}
+                      </span>
+                    </p>
                   </div>
-                  <p className="text-xs text-slate-500 mt-1">
-                    {quiz.questionCount || (quiz.questions ? quiz.questions.length : 0)} Questions
-                    {' • '}
-                    <span className="font-semibold text-slate-700">
-                      {quiz.totalMarks || 0} Total Marks
-                    </span>
-                    {' • '}
-                    <span className="text-indigo-600 font-medium">
-                      {quiz.answerChangePolicy === 'ALLOW_RESELECTION' ? 'Allow Reselection' : 'Single Selection'}
-                    </span>
-                  </p>
+
+                  <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                    <button
+                      onClick={() => handlePreview(quiz.id)}
+                      className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-medium border border-slate-200 rounded-md transition-colors"
+                    >
+                      Preview
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleQuizHistory(quiz.id)}
+                      className={`px-3 py-1.5 text-xs font-medium border rounded-md transition-colors ${
+                        expandedHistoryQuizId === quiz.id
+                          ? 'bg-indigo-50 border-indigo-300 text-indigo-700 font-semibold'
+                          : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                      }`}
+                      title="View previously conducted examination sessions and reports"
+                    >
+                      History
+                    </button>
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={(e) => handleDuplicateQuiz(quiz.id, e)}
+                      className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-medium border border-slate-200 rounded-md transition-colors disabled:opacity-50"
+                      title="Duplicate this examination into a new editable draft"
+                    >
+                      Duplicate
+                    </button>
+                    {quiz.examStatus !== 'LIVE' && quiz.examStatus !== 'COMPLETED' && (
+                      <button
+                        onClick={() => loadQuizIntoEditor(quiz)}
+                        className="px-3 py-1.5 bg-white hover:bg-slate-50 text-indigo-600 text-xs font-medium border border-indigo-200 rounded-md transition-colors"
+                      >
+                        Edit Questions
+                      </button>
+                    )}
+                    {quiz.examStatus !== 'LIVE' && (
+                      <button
+                        id={`launch-quiz-${quiz.id}`}
+                        disabled={saving}
+                        onClick={() => handleLaunchExisting(quiz.id)}
+                        className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded-md transition-colors disabled:opacity-50"
+                      >
+                        {saving ? 'Starting...' : 'Start Live Session'}
+                      </button>
+                    )}
+                    {quiz.examStatus !== 'LIVE' && (
+                      <button
+                        onClick={(e) => handleDeleteQuiz(quiz.id, e)}
+                        className="p-1.5 text-slate-400 hover:text-red-600 rounded"
+                        title="Delete Examination"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => handlePreview(quiz.id)}
-                    className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-medium border border-slate-200 rounded-md transition-colors"
-                  >
-                    Preview
-                  </button>
-                  <button
-                    type="button"
-                    disabled={saving}
-                    onClick={(e) => handleDuplicateQuiz(quiz.id, e)}
-                    className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-medium border border-slate-200 rounded-md transition-colors disabled:opacity-50"
-                    title="Duplicate this examination into a new editable draft"
-                  >
-                    Duplicate
-                  </button>
-                  {quiz.examStatus !== 'LIVE' && quiz.examStatus !== 'COMPLETED' && (
-                    <button
-                      onClick={() => loadQuizIntoEditor(quiz)}
-                      className="px-3 py-1.5 bg-white hover:bg-slate-50 text-indigo-600 text-xs font-medium border border-indigo-200 rounded-md transition-colors"
-                    >
-                      Edit Questions
-                    </button>
-                  )}
-                  {quiz.examStatus !== 'COMPLETED' && (
-                    <button
-                      id={`launch-quiz-${quiz.id}`}
-                      disabled={saving}
-                      onClick={() => handleLaunchExisting(quiz.id)}
-                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium rounded-md transition-colors disabled:opacity-50"
-                    >
-                      {saving ? 'Starting...' : 'Start Live Session'}
-                    </button>
-                  )}
-                  {quiz.examStatus !== 'LIVE' && (
-                    <button
-                      onClick={(e) => handleDeleteQuiz(quiz.id, e)}
-                      className="p-1.5 text-slate-400 hover:text-red-600 rounded"
-                      title="Delete Examination"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
+                {expandedHistoryQuizId === quiz.id && (
+                  <div className="mt-4 pt-3 border-t border-slate-100 w-full space-y-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                        <span>📋</span> Examination History
+                      </h4>
+                      <span className="text-[11px] text-slate-500 font-medium">
+                        {(quizHistoryMap[quiz.id] || []).length} session(s)
+                      </span>
+                    </div>
+
+                    {loadingHistory && !quizHistoryMap[quiz.id] ? (
+                      <div className="py-4 text-center text-xs text-slate-500 flex items-center justify-center gap-2">
+                        <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-indigo-600 border-t-transparent rounded-full"></span>
+                        <span>Loading past examinations...</span>
+                      </div>
+                    ) : (quizHistoryMap[quiz.id] || []).length === 0 ? (
+                      <p className="text-xs text-slate-500 py-3 text-center bg-slate-50 rounded-lg border border-slate-100">
+                        No examination sessions conducted for this quiz yet.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {(quizHistoryMap[quiz.id] || []).map((sess) => (
+                          <div
+                            key={sess.pin}
+                            className="bg-slate-50/80 border border-slate-200 rounded-lg p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                          >
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono text-xs font-bold text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200">
+                                  PIN: {sess.pin}
+                                </span>
+                                <span className="text-xs font-semibold text-slate-800">
+                                  {sess.quizTitle}
+                                </span>
+                                <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                                  {sess.status || 'COMPLETED'}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-slate-500 mt-1">
+                                {sess.completedAt ? new Date(sess.completedAt).toLocaleString() : new Date(sess.createdAt).toLocaleString()}
+                                {' • '}
+                                <span className="font-semibold text-slate-700">{sess.totalCandidates} Candidates</span>
+                                {' • '}
+                                <span className="font-semibold text-slate-700">{sess.totalMarks} Total Marks</span>
+                                {sess.averageScore != null && (
+                                  <>
+                                    {' • '}
+                                    <span>Avg: {sess.averageScore} pts</span>
+                                  </>
+                                )}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => onViewResults && onViewResults(sess.pin)}
+                                className="px-3 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 text-xs font-medium rounded transition-colors shadow-xs"
+                                title="View saved results and candidate scorecard"
+                              >
+                                View Results
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => downloadExamPdf(sess.pin)}
+                                className="px-3 py-1 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-medium rounded transition-colors flex items-center gap-1"
+                                title="Download complete examination report PDF"
+                              >
+                                <span>📄</span>
+                                <span>Download Report</span>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ))
           )}

@@ -1,17 +1,23 @@
 package com.quizlive.controller;
 
 import com.quizlive.dto.*;
+import com.quizlive.model.Faculty;
 import com.quizlive.model.LiveSession;
 import com.quizlive.model.Participant;
+import com.quizlive.model.Quiz;
 import com.quizlive.model.Submission;
+import com.quizlive.repository.QuizRepository;
 import com.quizlive.service.AuthService;
 import com.quizlive.service.IncidentService;
 import com.quizlive.service.LiveSessionService;
+import com.quizlive.service.ReportExportService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -22,15 +28,21 @@ public class LiveSessionController {
     private final LiveSessionService liveSessionService;
     private final AuthService authService;
     private final IncidentService incidentService;
+    private final QuizRepository quizRepository;
+    private final ReportExportService reportExportService;
 
     public LiveSessionController(
             LiveSessionService liveSessionService,
             AuthService authService,
-            IncidentService incidentService
+            IncidentService incidentService,
+            QuizRepository quizRepository,
+            ReportExportService reportExportService
     ) {
         this.liveSessionService = liveSessionService;
         this.authService = authService;
         this.incidentService = incidentService;
+        this.quizRepository = quizRepository;
+        this.reportExportService = reportExportService;
     }
 
     @PostMapping("/create")
@@ -113,6 +125,38 @@ public class LiveSessionController {
         }
     }
 
+    @GetMapping("/{pin}/results")
+    public ResponseEntity<?> getSessionResults(@PathVariable String pin) {
+        try {
+            SessionStateResponse state = liveSessionService.getHostSessionState(pin);
+            return ResponseEntity.ok(state);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @GetMapping("/quiz/{quizId}/history")
+    public ResponseEntity<?> getQuizHistory(
+            @PathVariable Long quizId,
+            @RequestHeader(value = "Authorization", required = false) String authHeader
+    ) {
+        try {
+            Faculty faculty = authService.validateFaculty(authHeader);
+            Quiz quiz = quizRepository.findById(quizId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Quiz not found with ID: " + quizId));
+            if (!reportExportService.isFacultyAuthorizedForQuiz(faculty, quiz)) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                        .body(Map.of("error", "Access denied: You are not authorized to view history for this examination."));
+            }
+            List<ExamHistoryDto> history = liveSessionService.getQuizSessionHistory(quizId);
+            return ResponseEntity.ok(history);
+        } catch (ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason() != null ? e.getReason() : e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     @GetMapping("/{pin}/candidate")
     public ResponseEntity<?> getCandidateState(
             @PathVariable String pin,
@@ -176,7 +220,16 @@ public class LiveSessionController {
             }
 
             AnswerVerificationResponse response = liveSessionService.submitAndVerifyAnswer(request);
-            return ResponseEntity.ok(response);
+            Map<String, Object> studentResponse = new HashMap<>();
+            studentResponse.put("success", true);
+            studentResponse.put("submitted", true);
+            studentResponse.put("questionId", response.getQuestionId());
+            studentResponse.put("selectedOptionId", response.getSelectedOptionId());
+            studentResponse.put("submittedLabel", response.getSubmittedLabel());
+            studentResponse.put("status", "SUBMITTED");
+            studentResponse.put("message", "Answer submitted successfully");
+            studentResponse.put("submittedAt", response.getSubmittedAt());
+            return ResponseEntity.ok(studentResponse);
         } catch (IllegalStateException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
                     "success", false,

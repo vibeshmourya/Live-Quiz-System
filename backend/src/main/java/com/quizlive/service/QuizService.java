@@ -54,7 +54,7 @@ public class QuizService {
     public List<QuizDto> getAllQuizzes(boolean isFaculty) {
         return quizRepository.findAll().stream()
                 .filter(q -> isFaculty || q.getExamStatus() == ExamStatus.LIVE || q.getExamStatus() == ExamStatus.SCHEDULED)
-                .map(this::toDto)
+                .map(q -> toDto(q, isFaculty))
                 .toList();
     }
 
@@ -68,7 +68,7 @@ public class QuizService {
             throw new IllegalArgumentException("Examination is confidential and not published yet.");
         }
 
-        return toDto(quiz);
+        return toDto(quiz, isFaculty);
     }
 
     @Transactional(readOnly = true)
@@ -443,6 +443,10 @@ public class QuizService {
     }
 
     public QuizDto toDto(Quiz quiz) {
+        return toDto(quiz, true);
+    }
+
+    public QuizDto toDto(Quiz quiz, boolean isFaculty) {
         QuizDto dto = new QuizDto();
         dto.setId(quiz.getId());
         dto.setTitle(quiz.getTitle());
@@ -479,7 +483,8 @@ public class QuizService {
                 List<AnswerOptionDto> optDtos = new ArrayList<>();
                 if (q.getOptions() != null) {
                     for (AnswerOption opt : q.getOptions()) {
-                        optDtos.add(new AnswerOptionDto(opt.getId(), opt.getOptionLabel(), opt.getOptionText(), opt.getIsCorrect()));
+                        Boolean isCorrect = isFaculty ? opt.getIsCorrect() : null;
+                        optDtos.add(new AnswerOptionDto(opt.getId(), opt.getOptionLabel(), opt.getOptionText(), isCorrect));
                     }
                 }
                 qDto.setOptions(optDtos);

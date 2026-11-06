@@ -5,18 +5,39 @@ import {
   downloadExamCsv,
   downloadIncidentPdf,
   downloadStudentPdf,
+  fetchSessionResults,
 } from '../services/api';
 
 export default function ResultsPage({ results, isHost, onNavigate, candidateInfo, pin }) {
   const [downloading, setDownloading] = useState(false);
   const [exportError, setExportError] = useState('');
+  const [currentResults, setCurrentResults] = useState(results);
+  const [loading, setLoading] = useState(!results && !!pin);
 
-  const resultsPublished = results?.resultsPublished !== false;
+  const resultsPublished = currentResults?.resultsPublished !== false;
   const isCandidate = !isHost;
 
   useEffect(() => {
+    if (!results && pin) {
+      setLoading(true);
+      fetchSessionResults(pin)
+        .then((data) => {
+          setCurrentResults(data);
+        })
+        .catch((err) => {
+          setExportError(err.message || 'Failed to load examination results');
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    } else {
+      setCurrentResults(results);
+    }
+  }, [pin, results]);
+
+  useEffect(() => {
     // Only launch celebratory confetti if results are officially published
-    if (resultsPublished) {
+    if (resultsPublished && !loading) {
       try {
         confetti({
           particleCount: 80,
@@ -27,9 +48,9 @@ export default function ResultsPage({ results, isHost, onNavigate, candidateInfo
         // ignore
       }
     }
-  }, [resultsPublished]);
+  }, [resultsPublished, loading]);
 
-  const leaderboard = results?.leaderboard || [];
+  const leaderboard = currentResults?.leaderboard || [];
 
   async function handleDownloadExamPdf() {
     if (!pin) return;
@@ -101,71 +122,80 @@ export default function ResultsPage({ results, isHost, onNavigate, candidateInfo
         </div>
       )}
 
-      {/* Case 1: Student viewing unpublished results */}
-      {isCandidate && !resultsPublished && (
-        <div className="w-full bg-white border border-slate-200 rounded-xl p-8 mb-6 shadow-xs text-center">
-          <div className="w-12 h-12 bg-amber-50 border border-amber-200 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-3 text-lg font-bold">
-            🔒
-          </div>
-          <h2 className="text-base font-bold text-slate-900 mb-1">
-            Submission Confirmed
-          </h2>
-          <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
-            Your examination attempt was successfully received and scored authoritatively by Quizora. Results and score details will be released once the examiner authorizes publication.
-          </p>
-          <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-center gap-2 text-xs text-slate-500">
-            <span>Participant:</span>
-            <span className="font-semibold text-slate-800">{candidateInfo?.nickname || results?.nickname}</span>
-          </div>
+      {loading ? (
+        <div className="w-full bg-white border border-slate-200 rounded-xl p-10 mb-6 shadow-xs text-center flex flex-col items-center justify-center gap-3">
+          <span className="animate-spin inline-block w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full"></span>
+          <p className="text-xs text-slate-500 font-medium">Loading examination results and audit records...</p>
         </div>
-      )}
-
-      {/* Case 2: Candidate Individual Performance Card (when published) */}
-      {isCandidate && resultsPublished && (
-        <div className="w-full bg-white border border-slate-200 rounded-xl p-6 mb-6 shadow-xs text-center">
-          <span className="text-xs uppercase font-bold tracking-wider text-slate-500">
-            {candidateInfo?.nickname || results?.nickname || 'Your Performance'}
-          </span>
-          <div className="text-4xl font-extrabold text-indigo-600 my-2">
-            {results?.myScore ?? 0} pts
-          </div>
-
-          <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-slate-100 text-xs">
-            <div>
-              <span className="text-slate-400 block">Rank</span>
-              <span className="font-bold text-slate-800 text-sm">
-                #{results?.myRank || '-'}
-              </span>
-            </div>
-            <div>
-              <span className="text-slate-400 block">Correct</span>
-              <span className="font-bold text-emerald-600 text-sm">
-                {results?.totalCorrect ?? 0}
-              </span>
-            </div>
-            <div>
-              <span className="text-slate-400 block">Incorrect</span>
-              <span className="font-bold text-red-500 text-sm">
-                {results?.totalIncorrect ?? 0}
-              </span>
-            </div>
-          </div>
-
-          {(candidateInfo?.candidateId || results?.candidateId) && (
-            <div className="mt-5 pt-4 border-t border-slate-100 flex justify-center">
-              <button
-                id="download-my-report-btn"
-                type="button"
-                disabled={downloading}
-                onClick={() => handleDownloadStudentPdf(candidateInfo?.candidateId || results?.candidateId)}
-                className="py-2.5 px-4 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-xs font-semibold text-indigo-700 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
-              >
-                <span>📥</span>
-                <span>{downloading ? 'Downloading...' : 'Download My Score Report (PDF)'}</span>
-              </button>
+      ) : (
+        <>
+          {/* Case 1: Student viewing unpublished results */}
+          {isCandidate && !resultsPublished && (
+            <div className="w-full bg-white border border-slate-200 rounded-xl p-8 mb-6 shadow-xs text-center">
+              <div className="w-12 h-12 bg-amber-50 border border-amber-200 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-3 text-lg font-bold">
+                🔒
+              </div>
+              <h2 className="text-base font-bold text-slate-900 mb-1">
+                Submission Confirmed
+              </h2>
+              <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+                Your examination attempt was successfully received and scored authoritatively by Quizora. Results and score details will be released once the examiner authorizes publication.
+              </p>
+              <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-center gap-2 text-xs text-slate-500">
+                <span>Participant:</span>
+                <span className="font-semibold text-slate-800">{candidateInfo?.nickname || currentResults?.nickname}</span>
+              </div>
             </div>
           )}
-        </div>
+
+          {/* Case 2: Candidate Individual Performance Card (when published) */}
+          {isCandidate && resultsPublished && (
+            <div className="w-full bg-white border border-slate-200 rounded-xl p-6 mb-6 shadow-xs text-center">
+              <span className="text-xs uppercase font-bold tracking-wider text-slate-500">
+                {candidateInfo?.nickname || currentResults?.nickname || 'Your Performance'}
+              </span>
+              <div className="text-4xl font-extrabold text-indigo-600 my-2">
+                {currentResults?.myScore ?? 0} pts
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-slate-100 text-xs">
+                <div>
+                  <span className="text-slate-400 block">Rank</span>
+                  <span className="font-bold text-slate-800 text-sm">
+                    #{currentResults?.myRank || '-'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Correct</span>
+                  <span className="font-bold text-emerald-600 text-sm">
+                    {currentResults?.totalCorrect ?? 0}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block">Incorrect</span>
+                  <span className="font-bold text-red-500 text-sm">
+                    {currentResults?.totalIncorrect ?? 0}
+                  </span>
+                </div>
+              </div>
+
+              {(candidateInfo?.candidateId || currentResults?.candidateId) && (
+                <div className="mt-5 pt-4 border-t border-slate-100 flex justify-center">
+                  <button
+                    id="download-my-report-btn"
+                    type="button"
+                    disabled={downloading}
+                    onClick={() => handleDownloadStudentPdf(candidateInfo?.candidateId || currentResults?.candidateId)}
+                    className="py-2.5 px-4 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-xs font-semibold text-indigo-700 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
+                  >
+                    <span>📥</span>
+                    <span>{downloading ? 'Downloading...' : 'Download My Score Report (PDF)'}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
 
       {/* Leaderboard Table (Shown if host, or if candidate with published results) */}

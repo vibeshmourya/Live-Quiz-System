@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class LiveSessionService {
@@ -318,25 +319,25 @@ public class LiveSessionService {
         messagingTemplate.convertAndSend("/topic/session/" + session.getPin() + "/stats",
                 new WsMessage("STATS_UPDATED", statsPayload));
 
-        // Publish participant-specific verification event to candidate
-        Map<String, Object> verifyPayload = new HashMap<>();
-        verifyPayload.put("eventType", "ANSWER_VERIFIED");
-        verifyPayload.put("roomCode", session.getPin());
-        verifyPayload.put("sessionPin", session.getPin());
-        verifyPayload.put("participantId", participant.getId());
-        verifyPayload.put("candidateId", participant.getCandidateId());
-        verifyPayload.put("questionId", currentQuestion.getId());
-        verifyPayload.put("submissionId", submission.getId());
-        verifyPayload.put("selectedOptionId", selectedOption.getId());
-        verifyPayload.put("submittedLabel", label);
-        verifyPayload.put("isCorrect", isCorrect);
-        verifyPayload.put("verified", true);
-        verifyPayload.put("status", "VERIFIED");
-        verifyPayload.put("marksAwarded", marks);
-        verifyPayload.put("message", isCorrect ? "Answer verified successfully" : "Incorrect answer");
+        // Publish participant-specific submission acknowledgment event to candidate
+        // DO NOT reveal correctness or correct answer over student WebSocket channels during exam
+        Map<String, Object> ackPayload = new HashMap<>();
+        ackPayload.put("eventType", "ANSWER_SUBMITTED");
+        ackPayload.put("roomCode", session.getPin());
+        ackPayload.put("sessionPin", session.getPin());
+        ackPayload.put("participantId", participant.getId());
+        ackPayload.put("candidateId", participant.getCandidateId());
+        ackPayload.put("questionId", currentQuestion.getId());
+        ackPayload.put("submissionId", submission.getId());
+        ackPayload.put("selectedOptionId", selectedOption.getId());
+        ackPayload.put("submittedLabel", label);
+        ackPayload.put("success", true);
+        ackPayload.put("submitted", true);
+        ackPayload.put("status", "SUBMITTED");
+        ackPayload.put("message", "Answer submitted successfully");
 
         messagingTemplate.convertAndSend("/topic/session/" + session.getPin() + "/candidate/" + participant.getCandidateId(),
-                new WsMessage("ANSWER_VERIFIED", verifyPayload));
+                new WsMessage("ANSWER_SUBMITTED", ackPayload));
 
         return submission;
     }
@@ -346,6 +347,7 @@ public class LiveSessionService {
         Submission submission = submitAnswer(request);
         AnswerVerificationResponse resp = new AnswerVerificationResponse();
         resp.setSuccess(true);
+        resp.setSubmitted(true);
         resp.setVerified(true);
         resp.setQuestionId(submission.getQuestion().getId());
         resp.setSelectedOptionId(submission.getSelectedOption() != null ? submission.getSelectedOption().getId() : null);
@@ -471,6 +473,7 @@ public class LiveSessionService {
                     .orElseThrow(() -> new IllegalArgumentException("Session not found: " + pin));
 
             session.setStatus(SessionStatus.FINISHED);
+            session.setCompletedAt(LocalDateTime.now());
             liveSessionRepository.save(session);
 
             Quiz quiz = session.getQuiz();
@@ -515,6 +518,7 @@ public class LiveSessionService {
         resp.setRequireFullscreen(session.getQuiz().getRequireFullscreen());
         resp.setMonitorTabSwitch(session.getQuiz().getMonitorTabSwitch());
         resp.setRestrictCopyPaste(session.getQuiz().getRestrictCopyPaste());
+        resp.setResultsPublished(Boolean.TRUE.equals(session.getQuiz().getResultsPublished()));
         resp.setTotalIncidents(examIncidentRepository.countByLiveSessionId(session.getId()));
 
         long participantCount = participantRepository.countBySessionPin(session.getPin());
@@ -581,16 +585,18 @@ public class LiveSessionService {
         resp.setResultsPublished(session.getQuiz().getResultsPublished());
         resp.setShowCorrectAnswers(session.getQuiz().getShowCorrectAnswers());
 
+        boolean showAnswersSetting = Boolean.TRUE.equals(session.getQuiz().getShowCorrectAnswers());
+        boolean isRevealedOrFinished = session.getStatus() == SessionStatus.QUESTION_REVEALED
+                || (session.getStatus() == SessionStatus.FINISHED && showAnswersSetting);
+
         if (participant != null) {
             resp.setNickname(participant.getNickname());
-            resp.setMyScore(participant.getScore());
+            // Hide live score during active examination to prevent score-delta leakage
+            resp.setMyScore(isRevealedOrFinished || session.getStatus() == SessionStatus.FINISHED ? participant.getScore() : 0);
             resp.setMyIncidentCount(examIncidentRepository.countByLiveSessionIdAndParticipantId(session.getId(), participant.getId()));
             resp.setRulesAcknowledged(Boolean.TRUE.equals(participant.getRulesAcknowledged()));
         }
 
-        boolean showAnswersSetting = Boolean.TRUE.equals(session.getQuiz().getShowCorrectAnswers());
-        boolean isRevealedOrFinished = session.getStatus() == SessionStatus.QUESTION_REVEALED
-                || (session.getStatus() == SessionStatus.FINISHED && showAnswersSetting);
         if (session.getStatus() != SessionStatus.WAITING && session.getCurrentQuestionIndex() < session.getQuiz().getQuestions().size()) {
             Question currentQuestion = session.getQuiz().getQuestions().get(session.getCurrentQuestionIndex());
             resp.setCurrentQuestion(toCandidateQuestionDto(currentQuestion));
@@ -604,11 +610,17 @@ public class LiveSessionService {
                     if (sub.get().getSelectedOption() != null) {
                         resp.setMySelectedOptionId(sub.get().getSelectedOption().getId());
                     }
-                    resp.setWasCorrect(sub.get().getIsCorrect());
+                    if (isRevealedOrFinished) {
+                        resp.setWasCorrect(sub.get().getIsCorrect());
+                    } else {
+                        resp.setWasCorrect(null);
+                    }
                 } else {
                     resp.setHasSubmitted(false);
                     if (isRevealedOrFinished) {
                         resp.setWasCorrect(false);
+                    } else {
+                        resp.setWasCorrect(null);
                     }
                 }
             }
@@ -617,6 +629,9 @@ public class LiveSessionService {
                 String correctLabel = findAuthoritativeCorrectOptionLabel(currentQuestion);
                 resp.setRevealedCorrectLabel(correctLabel);
                 resp.setCorrectOptionLabel(correctLabel);
+            } else {
+                resp.setRevealedCorrectLabel(null);
+                resp.setCorrectOptionLabel(null);
             }
         }
 
@@ -741,6 +756,49 @@ public class LiveSessionService {
             optDtos.add(new CandidateOptionDto(opt.getId(), opt.getOptionLabel(), opt.getOptionText()));
         }
         dto.setOptions(optDtos);
+        return dto;
+    }
+
+    @Transactional(readOnly = true)
+    public List<ExamHistoryDto> getQuizSessionHistory(Long quizId) {
+        List<LiveSession> sessions = liveSessionRepository.findByQuizIdOrderByCreatedAtDesc(quizId);
+        return sessions.stream().map(this::toExamHistoryDto).collect(Collectors.toList());
+    }
+
+    public ExamHistoryDto toExamHistoryDto(LiveSession session) {
+        ExamHistoryDto dto = new ExamHistoryDto();
+        dto.setSessionId(session.getId());
+        dto.setPin(session.getPin());
+        dto.setQuizId(session.getQuiz().getId());
+        dto.setQuizTitle(session.getQuiz().getTitle());
+        dto.setCreatedAt(session.getCreatedAt());
+        dto.setCompletedAt(session.getCompletedAt() != null ? session.getCompletedAt() : session.getCreatedAt());
+        dto.setStatus(session.getStatus());
+        dto.setTotalQuestions(session.getQuiz().getQuestions().size());
+        dto.setTotalMarks(session.getQuiz().calculateTotalMarks());
+        dto.setResultsPublished(Boolean.TRUE.equals(session.getQuiz().getResultsPublished()));
+
+        List<Participant> participants = participantRepository.findByLiveSessionIdOrderByScoreDesc(session.getId());
+        dto.setTotalCandidates(participants.size());
+
+        if (!participants.isEmpty()) {
+            int highest = participants.get(0).getScore() != null ? participants.get(0).getScore() : 0;
+            int lowest = highest;
+            double sum = 0;
+            for (Participant p : participants) {
+                int s = p.getScore() != null ? p.getScore() : 0;
+                if (s > highest) highest = s;
+                if (s < lowest) lowest = s;
+                sum += s;
+            }
+            dto.setHighestScore(highest);
+            dto.setLowestScore(lowest);
+            dto.setAverageScore(Math.round((sum / participants.size()) * 10.0) / 10.0);
+        } else {
+            dto.setHighestScore(0);
+            dto.setLowestScore(0);
+            dto.setAverageScore(0.0);
+        }
         return dto;
     }
 }

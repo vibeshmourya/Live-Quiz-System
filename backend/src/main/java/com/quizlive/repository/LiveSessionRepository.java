@@ -10,5 +10,7 @@ public interface LiveSessionRepository extends JpaRepository<LiveSession, Long> 
     Optional<LiveSession> findByPin(String pin);
     boolean existsByPin(String pin);
     java.util.List<LiveSession> findByQuizId(Long quizId);
+    java.util.List<LiveSession> findByQuizIdOrderByCreatedAtDesc(Long quizId);
+    java.util.List<LiveSession> findByQuizFacultyUsernameOrderByCreatedAtDesc(String facultyUsername);
     long countByQuizId(Long quizId);
 }

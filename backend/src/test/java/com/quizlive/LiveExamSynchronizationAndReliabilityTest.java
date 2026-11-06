@@ -804,11 +804,11 @@ public class LiveExamSynchronizationAndReliabilityTest {
         assertEquals(Boolean.FALSE, respCharlie.getIsCorrect(), "Charlie chose C -> isCorrect MUST be false");
         assertEquals("C", respCharlie.getSubmittedLabel());
 
-        // Inspect Candidate State before reveal: Alice has wasCorrect=true, but revealedCorrectLabel is NOT exposed
+        // Inspect Candidate State before reveal: Alice has selected B, but correctness and correct label are NOT exposed before reveal
         CandidateStateResponse aliceActiveState = liveSessionService.getCandidateSessionState(pin, p1.getCandidateId());
         assertEquals("B", aliceActiveState.getMySelectedLabel());
         assertEquals(optB_WebSocket.getId(), aliceActiveState.getMySelectedOptionId());
-        assertEquals(Boolean.TRUE, aliceActiveState.getWasCorrect(), "Alice verified state must reflect true");
+        assertNull(aliceActiveState.getWasCorrect(), "Correctness must not be exposed in active candidate state before reveal");
         assertNull(aliceActiveState.getRevealedCorrectLabel(), "Correct label must not be exposed before reveal");
 
         // Reveal Question 1: Host correctly shows B

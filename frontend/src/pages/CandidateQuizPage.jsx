@@ -17,6 +17,7 @@ export default function CandidateQuizPage({
   const selectedLabelRef = useRef(selectedLabel);
   selectedLabelRef.current = selectedLabel;
   const answersMapRef = useRef({});
+  const lastStateVersionRef = useRef(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [timerRemaining, setTimerRemaining] = useState(0);
 
@@ -65,10 +66,17 @@ export default function CandidateQuizPage({
     try {
       setLoading(true);
       const data = await getCandidateState(pin, candidateId);
+      if (!data) return;
+
+      // Drop stale REST response if incoming stateVersion is older than what we already processed
+      if (data.stateVersion !== undefined && data.stateVersion !== null) {
+        if (Number(data.stateVersion) < lastStateVersionRef.current) {
+          return;
+        }
+        lastStateVersionRef.current = Math.max(lastStateVersionRef.current, Number(data.stateVersion));
+      }
 
       setState((prev) => {
-        if (!data) return prev;
-
         // Preserve client-cached answer if incoming data lacks it
         const currentQId = data.currentQuestion?.id;
         const cachedAnswer = currentQId ? answersMapRef.current[currentQId] : null;
@@ -95,6 +103,8 @@ export default function CandidateQuizPage({
             resolvedWasCorrect = Boolean(data.wasCorrect);
           } else if (resolvedCorrect && mySelected) {
             resolvedWasCorrect = resolvedCorrect.trim().toUpperCase() === mySelected.trim().toUpperCase();
+          } else if (!mySelected && !data.hasSubmitted) {
+            resolvedWasCorrect = false;
           } else if (isSameQuestion && prev?.wasCorrect !== undefined && prev?.wasCorrect !== null) {
             resolvedWasCorrect = prev.wasCorrect;
           } else {
@@ -286,6 +296,13 @@ export default function CandidateQuizPage({
       (event) => {
         if (event.type === 'QUESTION_STARTED') {
           const payload = event.payload;
+          const qIdx = payload.questionIndex !== undefined ? payload.questionIndex : 0;
+          const version = payload.stateVersion !== undefined ? Number(payload.stateVersion) : ((qIdx * 10) + 1);
+          if (version < lastStateVersionRef.current) {
+            return;
+          }
+          lastStateVersionRef.current = Math.max(lastStateVersionRef.current, version);
+
           const qId = payload.question?.id;
           const previousAnswer = qId ? answersMapRef.current[qId] : null;
 
@@ -313,11 +330,19 @@ export default function CandidateQuizPage({
               revealedCorrectLabel: null,
               correctOptionLabel: null,
               wasCorrect: null,
+              stateVersion: version,
             };
           });
           setSelectedLabel(previousAnswer || null);
         } else if (event.type === 'QUESTION_REVEALED') {
           const payload = event.payload || {};
+          const qIdx = payload.questionIndex !== undefined ? payload.questionIndex : 0;
+          const version = payload.stateVersion !== undefined ? Number(payload.stateVersion) : ((qIdx * 10) + 5);
+          if (version < lastStateVersionRef.current) {
+            return;
+          }
+          lastStateVersionRef.current = Math.max(lastStateVersionRef.current, version);
+
           setState((prev) => {
             if (!prev) return prev;
             if (payload.questionIndex !== undefined && prev.currentQuestionIndex > payload.questionIndex) {
@@ -334,6 +359,8 @@ export default function CandidateQuizPage({
               isCorrect = Boolean(payload.wasCorrect);
             } else if (activeChoice && revealedCorrect) {
               isCorrect = activeChoice === revealedCorrect;
+            } else if (!activeChoice && !prev.hasSubmitted) {
+              isCorrect = false;
             } else if (prev.wasCorrect !== undefined && prev.wasCorrect !== null) {
               isCorrect = prev.wasCorrect;
             } else {
@@ -346,8 +373,12 @@ export default function CandidateQuizPage({
               revealedCorrectLabel: revealedCorrect || (sameQuestion ? prev.revealedCorrectLabel : null) || null,
               correctOptionLabel: revealedCorrect || (sameQuestion ? prev.correctOptionLabel : null) || null,
               wasCorrect: isCorrect !== null ? isCorrect : (sameQuestion ? prev.wasCorrect : null),
+              stateVersion: version,
             };
           });
+
+          // Instantly sync authoritative candidate evaluation from the committed transaction
+          loadCandidateState();
         } else if (event.type === 'PARTICIPANT_JOINED') {
           if (event.payload.participants && Array.isArray(event.payload.participants)) {
             setParticipants(event.payload.participants);
@@ -818,7 +849,18 @@ export default function CandidateQuizPage({
               ? (candidateChoice
                   ? `✕ Incorrect. The correct answer was ${displayCorrectLabel}.`
                   : `Time up! The correct answer was ${displayCorrectLabel}.`)
-              : 'Verifying results with examination server...'}
+              : (
+                  <div className="flex flex-col items-center gap-1.5">
+                    <span>Verifying results with examination server...</span>
+                    <button
+                      type="button"
+                      onClick={() => loadCandidateState()}
+                      className="px-2.5 py-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-md shadow-xs cursor-pointer"
+                    >
+                      Sync Verdict
+                    </button>
+                  </div>
+                )}
           </div>
         ) : hasSubmitted ? (
           <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl text-center text-xs font-medium text-indigo-900 shadow-xs">

@@ -8,6 +8,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
@@ -178,7 +180,7 @@ public class LiveSessionService {
             session.setQuestionStartedAtEpochMs(now);
             session.setQuestionEndsAtEpochMs(now + durationMs);
 
-            liveSessionRepository.save(session);
+            liveSessionRepository.saveAndFlush(session);
 
             // Broadcast QUESTION_STARTED event to candidates
             CandidateQuestionDto candidateQ = toCandidateQuestionDto(currentQuestion);
@@ -196,13 +198,15 @@ public class LiveSessionService {
             questionPayload.put("warningThreshold", session.getQuiz().getWarningThreshold());
             questionPayload.put("stateVersion", ((long) questionIndex * 10L) + 1L);
 
-            messagingTemplate.convertAndSend("/topic/session/" + pin,
-                    new WsMessage("QUESTION_STARTED", questionPayload));
-
             // Deliver authoritative host session state to host topic
             SessionStateResponse hostState = getHostSessionState(pin);
-            messagingTemplate.convertAndSend("/topic/session/" + pin + "/host",
-                    new WsMessage("HOST_STATE_CHANGED", hostState));
+
+            sendAfterCommit(() -> {
+                messagingTemplate.convertAndSend("/topic/session/" + pin,
+                        new WsMessage("QUESTION_STARTED", questionPayload));
+                messagingTemplate.convertAndSend("/topic/session/" + pin + "/host",
+                        new WsMessage("HOST_STATE_CHANGED", hostState));
+            });
 
             return hostState;
         }
@@ -314,7 +318,7 @@ public class LiveSessionService {
                     .orElseThrow(() -> new IllegalArgumentException("Session not found: " + pin));
 
             session.setStatus(SessionStatus.QUESTION_REVEALED);
-            liveSessionRepository.save(session);
+            liveSessionRepository.saveAndFlush(session);
 
             Question currentQuestion = session.getQuiz().getQuestions().get(session.getCurrentQuestionIndex());
             String correctLabel = findAuthoritativeCorrectOptionLabel(currentQuestion);
@@ -340,12 +344,14 @@ public class LiveSessionService {
             log.info("[REVEAL_ANSWER] PIN={}, QuestionId={}, CorrectOption={}, TotalSubmissions={}, CorrectSubmissions={}, Destination={}",
                     pin, currentQuestion.getId(), correctLabel, totalSubmissions, correctSubmissions, "/topic/session/" + pin);
 
-            messagingTemplate.convertAndSend("/topic/session/" + pin,
-                    new WsMessage("QUESTION_REVEALED", revealPayload));
-
             SessionStateResponse hostState = getHostSessionState(pin);
-            messagingTemplate.convertAndSend("/topic/session/" + pin + "/host",
-                    new WsMessage("HOST_STATE_CHANGED", hostState));
+
+            sendAfterCommit(() -> {
+                messagingTemplate.convertAndSend("/topic/session/" + pin,
+                        new WsMessage("QUESTION_REVEALED", revealPayload));
+                messagingTemplate.convertAndSend("/topic/session/" + pin + "/host",
+                        new WsMessage("HOST_STATE_CHANGED", hostState));
+            });
 
             return hostState;
         }
@@ -419,13 +425,13 @@ public class LiveSessionService {
                     .orElseThrow(() -> new IllegalArgumentException("Session not found: " + pin));
 
             session.setStatus(SessionStatus.FINISHED);
-            liveSessionRepository.save(session);
+            liveSessionRepository.saveAndFlush(session);
 
             Quiz quiz = session.getQuiz();
             if (quiz != null) {
                 quiz.setExamStatus(ExamStatus.COMPLETED);
                 quiz.setUpdatedAt(LocalDateTime.now());
-                quizRepository.save(quiz);
+                quizRepository.saveAndFlush(quiz);
             }
 
             boolean resultsPublished = Boolean.TRUE.equals(session.getQuiz().getResultsPublished());
@@ -437,12 +443,14 @@ public class LiveSessionService {
             finishPayload.put("leaderboard", resultsPublished ? leaderboard : Collections.emptyList());
             finishPayload.put("stateVersion", Long.MAX_VALUE);
 
-            messagingTemplate.convertAndSend("/topic/session/" + pin,
-                    new WsMessage("SESSION_FINISHED", finishPayload));
-
             SessionStateResponse hostState = getHostSessionState(pin);
-            messagingTemplate.convertAndSend("/topic/session/" + pin + "/host",
-                    new WsMessage("HOST_STATE_CHANGED", hostState));
+
+            sendAfterCommit(() -> {
+                messagingTemplate.convertAndSend("/topic/session/" + pin,
+                        new WsMessage("SESSION_FINISHED", finishPayload));
+                messagingTemplate.convertAndSend("/topic/session/" + pin + "/host",
+                        new WsMessage("HOST_STATE_CHANGED", hostState));
+            });
 
             return hostState;
         }
@@ -503,6 +511,16 @@ public class LiveSessionService {
             resp.setLeaderboard(getLeaderboard(session.getId()));
         }
 
+        long stateVersion = 0L;
+        if (session.getStatus() == SessionStatus.QUESTION_ACTIVE) {
+            stateVersion = ((long) session.getCurrentQuestionIndex() * 10L) + 1L;
+        } else if (session.getStatus() == SessionStatus.QUESTION_REVEALED) {
+            stateVersion = ((long) session.getCurrentQuestionIndex() * 10L) + 5L;
+        } else if (session.getStatus() == SessionStatus.FINISHED) {
+            stateVersion = Long.MAX_VALUE;
+        }
+        resp.setStateVersion(stateVersion);
+
         return resp;
     }
 
@@ -556,9 +574,16 @@ public class LiveSessionService {
                     }
                 } else {
                     resp.setHasSubmitted(false);
+                    resp.setMySelectedLabel(null);
                     if (isRevealedOrFinished) {
                         resp.setWasCorrect(false);
                     }
+                }
+            } else {
+                resp.setHasSubmitted(false);
+                resp.setMySelectedLabel(null);
+                if (isRevealedOrFinished) {
+                    resp.setWasCorrect(false);
                 }
             }
 
@@ -611,6 +636,16 @@ public class LiveSessionService {
                 }
             }
         }
+
+        long stateVersion = 0L;
+        if (session.getStatus() == SessionStatus.QUESTION_ACTIVE) {
+            stateVersion = ((long) session.getCurrentQuestionIndex() * 10L) + 1L;
+        } else if (session.getStatus() == SessionStatus.QUESTION_REVEALED) {
+            stateVersion = ((long) session.getCurrentQuestionIndex() * 10L) + 5L;
+        } else if (session.getStatus() == SessionStatus.FINISHED) {
+            stateVersion = Long.MAX_VALUE;
+        }
+        resp.setStateVersion(stateVersion);
 
         return resp;
     }
@@ -710,5 +745,18 @@ public class LiveSessionService {
         }
         dto.setOptions(optDtos);
         return dto;
+    }
+
+    private void sendAfterCommit(Runnable sendAction) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    sendAction.run();
+                }
+            });
+        } else {
+            sendAction.run();
+        }
     }
 }

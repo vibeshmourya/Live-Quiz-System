@@ -36,8 +36,17 @@ public class CandidateStateResponse {
     private boolean resultsPublished = true;
     private boolean showCorrectAnswers = true;
     private boolean rulesAcknowledged = false;
+    private Long stateVersion;
 
     public CandidateStateResponse() {}
+
+    public Long getStateVersion() {
+        return stateVersion;
+    }
+
+    public void setStateVersion(Long stateVersion) {
+        this.stateVersion = stateVersion;
+    }
 
     public boolean isRulesAcknowledged() {
         return rulesAcknowledged;

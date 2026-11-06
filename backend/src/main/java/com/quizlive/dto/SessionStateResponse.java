@@ -27,8 +27,17 @@ public class SessionStateResponse {
     private Map<String, Long> optionCounts = new HashMap<>();
     private List<LeaderboardEntryDto> leaderboard;
     private int totalMarks;
+    private Long stateVersion;
 
     public SessionStateResponse() {}
+
+    public Long getStateVersion() {
+        return stateVersion;
+    }
+
+    public void setStateVersion(Long stateVersion) {
+        this.stateVersion = stateVersion;
+    }
 
     public String getPin() {
         return pin;

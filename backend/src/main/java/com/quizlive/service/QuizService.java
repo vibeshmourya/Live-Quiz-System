@@ -16,9 +16,12 @@ import com.quizlive.repository.ParticipantRepository;
 import com.quizlive.repository.QuestionRepository;
 import com.quizlive.repository.QuizRepository;
 import com.quizlive.repository.SubmissionRepository;
+import com.quizlive.model.SessionStatus;
 import jakarta.annotation.PostConstruct;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -53,6 +56,7 @@ public class QuizService {
     @Transactional(readOnly = true)
     public List<QuizDto> getAllQuizzes(boolean isFaculty) {
         return quizRepository.findAll().stream()
+                .filter(q -> !Boolean.TRUE.equals(q.getDeleted()))
                 .filter(q -> isFaculty || q.getExamStatus() == ExamStatus.LIVE || q.getExamStatus() == ExamStatus.SCHEDULED)
                 .map(q -> toDto(q, isFaculty))
                 .toList();
@@ -61,11 +65,15 @@ public class QuizService {
     @Transactional(readOnly = true)
     public QuizDto getQuizById(Long id, boolean isFaculty) {
         Quiz quiz = quizRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Quiz / Examination not found with id: " + id));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Quiz / Examination not found with id: " + id));
+
+        if (Boolean.TRUE.equals(quiz.getDeleted())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Quiz / Examination has been deleted: " + id);
+        }
 
         // Confidentiality check: students must never view DRAFT examinations
         if (!isFaculty && quiz.getExamStatus() == ExamStatus.DRAFT) {
-            throw new IllegalArgumentException("Examination is confidential and not published yet.");
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Examination is confidential and not published yet.");
         }
 
         return toDto(quiz, isFaculty);
@@ -74,7 +82,12 @@ public class QuizService {
     @Transactional(readOnly = true)
     public QuizDto getFacultyPreview(Long id) {
         Quiz quiz = quizRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Quiz / Examination not found with id: " + id));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Quiz / Examination not found with id: " + id));
+
+        if (Boolean.TRUE.equals(quiz.getDeleted())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Quiz / Examination has been deleted: " + id);
+        }
+
         return toDto(quiz);
     }
 
@@ -87,7 +100,17 @@ public class QuizService {
         Quiz quiz;
         if (dto.getId() != null) {
             quiz = quizRepository.findById(dto.getId())
-                    .orElseThrow(() -> new IllegalArgumentException("Quiz not found with id: " + dto.getId()));
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Quiz not found with id: " + dto.getId()));
+
+            if (Boolean.TRUE.equals(quiz.getDeleted())) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Cannot edit a deleted examination.");
+            }
+
+            if (facultyUsername != null && quiz.getFacultyUsername() != null && !quiz.getFacultyUsername().trim().isEmpty()) {
+                if (!quiz.getFacultyUsername().equalsIgnoreCase(facultyUsername.trim()) && !"faculty".equalsIgnoreCase(quiz.getFacultyUsername().trim())) {
+                    throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Unauthorized: You do not have permission to edit this examination.");
+                }
+            }
 
             if (quiz.getExamStatus() == ExamStatus.LIVE) {
                 throw new IllegalStateException("Cannot edit questions while the examination is currently LIVE");
@@ -98,6 +121,9 @@ public class QuizService {
 
             quiz.setTitle(dto.getTitle().trim());
             quiz.setUpdatedAt(LocalDateTime.now());
+            if (dto.getIsDemo() != null) {
+                quiz.setIsDemo(dto.getIsDemo());
+            }
             if (dto.getExamStatus() != null) {
                 quiz.setExamStatus(dto.getExamStatus());
             }
@@ -117,6 +143,9 @@ public class QuizService {
             quiz = new Quiz(dto.getTitle().trim());
             quiz.setFacultyUsername(facultyUsername);
             quiz.setExamStatus(dto.getExamStatus() != null ? dto.getExamStatus() : ExamStatus.DRAFT);
+            if (dto.getIsDemo() != null) {
+                quiz.setIsDemo(dto.getIsDemo());
+            }
             if (dto.getAnswerChangePolicy() != null) {
                 quiz.setAnswerChangePolicy(dto.getAnswerChangePolicy());
             }
@@ -329,12 +358,20 @@ public class QuizService {
     @Transactional
     public QuizDto duplicateQuiz(Long quizId, String facultyUsername) {
         Quiz original = quizRepository.findById(quizId)
-                .orElseThrow(() -> new IllegalArgumentException("Quiz not found with id: " + quizId));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Quiz not found with id: " + quizId));
+
+        if (Boolean.TRUE.equals(original.getDeleted())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Cannot duplicate a deleted examination.");
+        }
 
         Quiz copy = new Quiz();
         copy.setTitle("Copy of " + original.getTitle().trim());
         copy.setFacultyUsername(facultyUsername != null && !facultyUsername.trim().isEmpty() ? facultyUsername : original.getFacultyUsername());
         copy.setExamStatus(ExamStatus.DRAFT);
+        copy.setIsDemo(false);
+        copy.setDeleted(false);
+        copy.setDeletedAt(null);
+        copy.setDeletedBy(null);
         copy.setAnswerChangePolicy(original.getAnswerChangePolicy());
         copy.setRequireFullscreen(original.getRequireFullscreen());
         copy.setMonitorTabSwitch(original.getMonitorTabSwitch());
@@ -376,70 +413,87 @@ public class QuizService {
 
     @Transactional
     public void deleteQuiz(Long quizId) {
-        Quiz quiz = quizRepository.findById(quizId)
-                .orElseThrow(() -> new IllegalArgumentException("Quiz not found with id: " + quizId));
+        deleteQuiz(quizId, null);
+    }
 
+    @Transactional
+    public void deleteQuiz(Long quizId, String facultyUsername) {
+        if (quizId == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Quiz ID must not be null");
+        }
+
+        Quiz quiz = quizRepository.findById(quizId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Quiz not found with id: " + quizId));
+
+        if (Boolean.TRUE.equals(quiz.getDeleted())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Quiz with id " + quizId + " has already been deleted.");
+        }
+
+        // Verify quiz ownership
+        if (facultyUsername != null && quiz.getFacultyUsername() != null && !quiz.getFacultyUsername().trim().isEmpty()) {
+            if (!quiz.getFacultyUsername().equalsIgnoreCase(facultyUsername.trim()) && !"faculty".equalsIgnoreCase(quiz.getFacultyUsername().trim())) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Unauthorized: You do not have permission to delete this examination.");
+            }
+        }
+
+        // Check if quiz is currently LIVE
         if (quiz.getExamStatus() == ExamStatus.LIVE) {
             throw new IllegalStateException("Cannot delete an examination that is currently LIVE. Please conclude or end the live examination session first.");
         }
 
-        // 1. Inspect all related submission dependencies
+        List<LiveSession> sessions = liveSessionRepository.findByQuizId(quizId);
+
+        // Inspect all related submission dependencies
         long sessionSubmissions = submissionRepository.countByLiveSessionQuizId(quizId);
         long questionSubmissions = submissionRepository.countByQuestionQuizId(quizId);
         long totalSubmissions = Math.max(sessionSubmissions, questionSubmissions);
 
-        // 2. Block deletion if genuine student submissions exist
         if (totalSubmissions > 0) {
-            throw new IllegalStateException("Cannot delete this examination because it contains " + totalSubmissions +
-                    " genuine student submission(s). Preserving student performance data is required for academic integrity.");
-        }
-
-        // 3. Inspect related sessions and verify ownership and relationships
-        List<LiveSession> sessions = liveSessionRepository.findByQuizId(quizId);
-
-        for (LiveSession session : sessions) {
-            // Verify session ownership
-            if (!session.getQuiz().getId().equals(quizId)) {
-                throw new IllegalStateException("Data integrity error: Session " + session.getPin() + " does not belong to quiz " + quizId);
-            }
-
-            // Verify zero submissions for this specific session
-            long subsForSession = submissionRepository.countByLiveSessionId(session.getId());
-            if (subsForSession > 0) {
-                throw new IllegalStateException("Cannot delete examination: Session " + session.getPin() +
-                        " contains " + subsForSession + " student submission(s).");
-            }
-
-            // Inspect and clean up related test examination incidents
-            List<ExamIncident> incidents = examIncidentRepository.findByLiveSessionIdOrderByServerTimestampDesc(session.getId());
-            if (!incidents.isEmpty()) {
-                for (ExamIncident inc : incidents) {
-                    if (inc.getLiveSession() == null || !inc.getLiveSession().getId().equals(session.getId())) {
-                        throw new IllegalStateException("Data integrity error: Incident " + inc.getId() + " does not belong to session " + session.getId());
-                    }
+            // Rule B: Quiz with completed examinations - Soft delete / archive to preserve historical records,
+            // student rankings, and PDF reports
+            quiz.setDeleted(true);
+            quiz.setDeletedAt(LocalDateTime.now());
+            quiz.setDeletedBy(facultyUsername != null ? facultyUsername : quiz.getFacultyUsername());
+            quiz.setExamStatus(ExamStatus.COMPLETED);
+            quizRepository.save(quiz);
+        } else {
+            // Rule A: Quiz with no examination history - Safe permanent deletion
+            for (LiveSession session : sessions) {
+                if (!session.getQuiz().getId().equals(quizId)) {
+                    throw new IllegalStateException("Data integrity error: Session " + session.getPin() + " does not belong to quiz " + quizId);
                 }
-                examIncidentRepository.deleteAll(incidents);
-            }
 
-            // Inspect and clean up related test participants
-            List<Participant> participants = participantRepository.findByLiveSessionIdOrderByScoreDesc(session.getId());
-            if (!participants.isEmpty()) {
-                for (Participant p : participants) {
-                    if (p.getLiveSession() == null || !p.getLiveSession().getId().equals(session.getId())) {
-                        throw new IllegalStateException("Data integrity error: Participant " + p.getId() + " does not belong to session " + session.getId());
+                // Clean up test examination incidents
+                List<ExamIncident> incidents = examIncidentRepository.findByLiveSessionIdOrderByServerTimestampDesc(session.getId());
+                if (!incidents.isEmpty()) {
+                    for (ExamIncident inc : incidents) {
+                        if (inc.getLiveSession() == null || !inc.getLiveSession().getId().equals(session.getId())) {
+                            throw new IllegalStateException("Data integrity error: Incident " + inc.getId() + " does not belong to session " + session.getId());
+                        }
                     }
+                    examIncidentRepository.deleteAll(incidents);
                 }
-                participantRepository.deleteAll(participants);
+
+                // Clean up test participants
+                List<Participant> participants = participantRepository.findByLiveSessionIdOrderByScoreDesc(session.getId());
+                if (!participants.isEmpty()) {
+                    for (Participant p : participants) {
+                        if (p.getLiveSession() == null || !p.getLiveSession().getId().equals(session.getId())) {
+                            throw new IllegalStateException("Data integrity error: Participant " + p.getId() + " does not belong to session " + session.getId());
+                        }
+                    }
+                    participantRepository.deleteAll(participants);
+                }
+
+                // Delete empty session shell
+                liveSessionRepository.delete(session);
             }
 
-            // Delete the session shell
-            liveSessionRepository.delete(session);
+            liveSessionRepository.flush();
+
+            // Permanent deletion cleanly cascades to questions and answer options
+            quizRepository.delete(quiz);
         }
-
-        liveSessionRepository.flush();
-
-        // 4. Delete the quiz (cleanly cascades to its own questions and answer options)
-        quizRepository.delete(quiz);
     }
 
     public QuizDto toDto(Quiz quiz) {
@@ -462,6 +516,11 @@ public class QuizService {
         dto.setResultsPublished(quiz.getResultsPublished());
         dto.setShowCorrectAnswers(quiz.getShowCorrectAnswers());
         dto.setFacultyUsername(quiz.getFacultyUsername());
+        dto.setDeleted(Boolean.TRUE.equals(quiz.getDeleted()));
+        dto.setDeletedAt(quiz.getDeletedAt());
+        dto.setDeletedBy(quiz.getDeletedBy());
+        dto.setIsDemo(Boolean.TRUE.equals(quiz.getIsDemo()));
+        dto.setSessionCount((int) liveSessionRepository.countByQuizId(quiz.getId()));
         dto.setCreatedAt(quiz.getCreatedAt());
         dto.setUpdatedAt(quiz.getUpdatedAt());
 
@@ -504,6 +563,8 @@ public class QuizService {
             Quiz quiz = new Quiz("Web Architecture & Networking Master Quiz");
             quiz.setExamStatus(ExamStatus.SCHEDULED);
             quiz.setFacultyUsername("faculty");
+            quiz.setIsDemo(true);
+            quiz.setDeleted(false);
 
             // Question 1
             Question q1 = new Question();
@@ -557,8 +618,20 @@ public class QuizService {
         } else {
             // Ensure existing quizzes have SCHEDULED status if null
             for (Quiz q : quizRepository.findAll()) {
+                boolean changed = false;
                 if (q.getExamStatus() == null) {
                     q.setExamStatus(ExamStatus.SCHEDULED);
+                    changed = true;
+                }
+                if (q.getDeleted() == null) {
+                    q.setDeleted(false);
+                    changed = true;
+                }
+                if (q.getIsDemo() == null) {
+                    q.setIsDemo(false);
+                    changed = true;
+                }
+                if (changed) {
                     quizRepository.save(q);
                 }
             }

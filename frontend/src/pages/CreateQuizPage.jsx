@@ -17,6 +17,11 @@ export default function CreateQuizPage({ onSessionCreated, onViewResults, onNavi
   const [existingQuizzes, setExistingQuizzes] = useState([]);
   const [loadingQuizzes, setLoadingQuizzes] = useState(true);
   const [activeTab, setActiveTab] = useState('new'); // 'new' or 'existing'
+  const [savedQuizFilter, setSavedQuizFilter] = useState('ALL'); // 'ALL', 'DEMO', 'DRAFT'
+
+  // Delete Confirmation State
+  const [quizToDelete, setQuizToDelete] = useState(null);
+  const [deletingQuizId, setDeletingQuizId] = useState(null);
 
   // Examination History State
   const [expandedHistoryQuizId, setExpandedHistoryQuizId] = useState(null);
@@ -350,17 +355,32 @@ export default function CreateQuizPage({ onSessionCreated, onViewResults, onNavi
     });
   }
 
-  async function handleDeleteQuiz(quizId, e) {
-    e.stopPropagation();
-    if (!window.confirm('Are you sure you want to delete this examination?')) return;
+  function promptDeleteQuiz(quiz, e) {
+    if (e) e.stopPropagation();
     setError('');
     setSuccessMessage('');
+    setQuizToDelete(quiz);
+  }
+
+  async function executeDeleteQuiz(quizId) {
+    setError('');
+    setSuccessMessage('');
+    setDeletingQuizId(quizId);
     try {
-      await deleteQuiz(quizId);
-      setSuccessMessage('Examination deleted successfully.');
-      loadQuizzes();
+      const res = await deleteQuiz(quizId);
+      setQuizToDelete(null);
+      // Synchronize frontend immediately without whole application reload
+      setExistingQuizzes((prev) => prev.filter((q) => q.id !== quizId));
+      if (editingQuizId === quizId) {
+        resetEditor();
+        setActiveTab('existing');
+      }
+      setSuccessMessage(res?.message || 'Quiz deleted successfully.');
     } catch (err) {
       setError(err.message || 'Failed to delete examination');
+      setQuizToDelete(null);
+    } finally {
+      setDeletingQuizId(null);
     }
   }
 
@@ -398,12 +418,30 @@ export default function CreateQuizPage({ onSessionCreated, onViewResults, onNavi
         </div>
         <div className="flex items-center gap-2">
           {editingQuizId && (
-            <button
-              onClick={resetEditor}
-              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 px-3 py-1.5 rounded border border-indigo-200 hover:bg-indigo-50"
-            >
-              + New Exam
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={(e) => {
+                  const currentQuiz = existingQuizzes.find((q) => q.id === editingQuizId) || {
+                    id: editingQuizId,
+                    title: title || 'Untitled Examination',
+                    questionCount: questions.length,
+                    sessionCount: 0,
+                  };
+                  promptDeleteQuiz(currentQuiz, e);
+                }}
+                className="text-xs font-medium text-red-600 hover:text-red-700 px-3 py-1.5 rounded border border-red-200 hover:bg-red-50 transition-colors"
+                title="Delete this examination"
+              >
+                Delete Quiz
+              </button>
+              <button
+                onClick={resetEditor}
+                className="text-xs font-medium text-indigo-600 hover:text-indigo-800 px-3 py-1.5 rounded border border-indigo-200 hover:bg-indigo-50"
+              >
+                + New Exam
+              </button>
+            </>
           )}
           <button
             onClick={() => onNavigate('home')}
@@ -454,20 +492,85 @@ export default function CreateQuizPage({ onSessionCreated, onViewResults, onNavi
 
       {activeTab === 'existing' ? (
         <div className="space-y-3">
+          {/* Filter Bar for Demo / Test and Draft Management */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
+            <div className="flex items-center gap-1.5 text-xs">
+              <span className="text-slate-500 font-medium mr-1">Filter:</span>
+              <button
+                type="button"
+                onClick={() => setSavedQuizFilter('ALL')}
+                className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                  savedQuizFilter === 'ALL'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                All ({existingQuizzes.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setSavedQuizFilter('DEMO')}
+                className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                  savedQuizFilter === 'DEMO'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Demo Content ({existingQuizzes.filter((q) => q.isDemo).length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setSavedQuizFilter('DRAFT')}
+                className={`px-2.5 py-1 rounded-md font-medium transition-colors ${
+                  savedQuizFilter === 'DRAFT'
+                    ? 'bg-slate-700 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Drafts ({existingQuizzes.filter((q) => q.examStatus === 'DRAFT').length})
+              </button>
+            </div>
+            {savedQuizFilter !== 'ALL' && (
+              <button
+                type="button"
+                onClick={() => setSavedQuizFilter('ALL')}
+                className="text-xs text-indigo-600 hover:text-indigo-800 font-medium underline"
+              >
+                Clear filter
+              </button>
+            )}
+          </div>
+
           {loadingQuizzes ? (
             <p className="text-sm text-slate-500 py-6 text-center">Loading quizzes...</p>
-          ) : existingQuizzes.length === 0 ? (
-            <p className="text-sm text-slate-500 py-6 text-center">No saved quizzes found. Create one now.</p>
+          ) : (savedQuizFilter === 'ALL' ? existingQuizzes : existingQuizzes.filter((q) => savedQuizFilter === 'DEMO' ? q.isDemo : q.examStatus === 'DRAFT')).length === 0 ? (
+            <div className="p-8 text-center bg-white border border-slate-200 rounded-lg">
+              <p className="text-sm text-slate-500">
+                {savedQuizFilter === 'DEMO'
+                  ? 'No demo quizzes found.'
+                  : savedQuizFilter === 'DRAFT'
+                  ? 'No draft quizzes found.'
+                  : 'No saved quizzes found. Create one now.'}
+              </p>
+            </div>
           ) : (
-            existingQuizzes.map((quiz) => (
+            (savedQuizFilter === 'ALL' ? existingQuizzes : existingQuizzes.filter((q) => savedQuizFilter === 'DEMO' ? q.isDemo : q.examStatus === 'DRAFT')).map((quiz) => (
               <div
                 key={quiz.id}
                 className="bg-white border border-slate-200 rounded-lg p-4 shadow-xs"
               >
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="font-semibold text-slate-900">{quiz.title}</h3>
+                      {quiz.isDemo && (
+                        <span
+                          className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200"
+                          title="System or faculty demo content"
+                        >
+                          Demo
+                        </span>
+                      )}
                       <span
                         className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
                           quiz.examStatus === 'DRAFT'
@@ -543,11 +646,13 @@ export default function CreateQuizPage({ onSessionCreated, onViewResults, onNavi
                     )}
                     {quiz.examStatus !== 'LIVE' && (
                       <button
-                        onClick={(e) => handleDeleteQuiz(quiz.id, e)}
-                        className="p-1.5 text-slate-400 hover:text-red-600 rounded"
-                        title="Delete Examination"
+                        type="button"
+                        disabled={deletingQuizId === quiz.id}
+                        onClick={(e) => promptDeleteQuiz(quiz, e)}
+                        className="px-3 py-1.5 bg-slate-50 hover:bg-red-50 text-slate-700 hover:text-red-600 text-xs font-medium border border-slate-200 hover:border-red-200 rounded-md transition-colors"
+                        title="Delete or archive this examination"
                       >
-                        ✕
+                        Delete
                       </button>
                     )}
                   </div>
@@ -993,6 +1098,88 @@ export default function CreateQuizPage({ onSessionCreated, onViewResults, onNavi
           quiz={previewQuiz}
           onClose={() => setPreviewQuiz(null)}
         />
+      )}
+
+      {/* Delete Quiz Confirmation Modal */}
+      {quizToDelete && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-xs p-4"
+        >
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-full bg-red-100 text-red-600 flex items-center justify-center shrink-0 text-xl font-bold">
+                ⚠️
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-bold text-slate-900">Delete Quiz?</h3>
+                <p className="text-sm text-slate-600 mt-1">
+                  Are you sure you want to delete this quiz? This action cannot be undone.
+                </p>
+
+                <div className="mt-4 p-3.5 bg-slate-50 rounded-lg border border-slate-200 space-y-2 text-xs">
+                  <div className="flex justify-between items-center gap-2">
+                    <span className="text-slate-500">Quiz Title:</span>
+                    <span className="font-semibold text-slate-900 text-right truncate max-w-[210px]" title={quizToDelete.title}>
+                      {quizToDelete.title}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500">Questions:</span>
+                    <span className="font-semibold text-slate-900">
+                      {quizToDelete.questionCount || (quizToDelete.questions ? quizToDelete.questions.length : 0)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500">Examination Sessions:</span>
+                    <span className="font-semibold text-slate-900">
+                      {quizToDelete.sessionCount ?? (quizHistoryMap[quizToDelete.id] ? quizHistoryMap[quizToDelete.id].length : 0)}
+                    </span>
+                  </div>
+                  {quizToDelete.isDemo && (
+                    <div className="flex justify-between items-center text-amber-800 bg-amber-50 px-2 py-1 rounded border border-amber-200">
+                      <span>Type:</span>
+                      <span className="font-bold">Demo Content</span>
+                    </div>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-slate-500 mt-2.5 leading-relaxed">
+                  Academic integrity guarantee: If this examination contains completed student submissions, it will be securely archived so student performance records, ranks, and PDF reports remain permanently accessible.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                id="cancel-delete-quiz-btn"
+                disabled={deletingQuizId === quizToDelete.id}
+                onClick={() => setQuizToDelete(null)}
+                className="px-4 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="confirm-delete-quiz-btn"
+                disabled={deletingQuizId === quizToDelete.id}
+                onClick={() => executeDeleteQuiz(quizToDelete.id)}
+                className="px-4 py-2 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {deletingQuizId === quizToDelete.id ? (
+                  <>
+                    <span className="animate-spin inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full"></span>
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <span>Delete Permanently</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -218,15 +218,24 @@ public class QuizController {
             @RequestHeader(value = "Authorization", required = false) String authHeader
     ) {
         try {
-            authService.validateFaculty(authHeader);
-            quizService.deleteQuiz(id);
-            return ResponseEntity.ok(Map.of("success", true, "deletedId", id));
+            Faculty faculty = authService.validateFaculty(authHeader);
+            if (id == null) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Quiz ID is required"));
+            }
+            quizService.deleteQuiz(id, faculty.getUsername());
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "deletedId", id,
+                    "message", "Quiz deleted successfully"
+            ));
         } catch (org.springframework.web.server.ResponseStatusException e) {
-            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason()));
-        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason() != null ? e.getReason() : e.getMessage()));
+        } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", e.getMessage()));
         }
     }
 }

@@ -20,6 +20,11 @@ public class QuizDto {
     private Boolean autoSubmitAtDeadline = true;
     private Boolean resultsPublished = true;
     private Boolean showCorrectAnswers = true;
+    private Boolean deleted = false;
+    private LocalDateTime deletedAt;
+    private String deletedBy;
+    private Boolean isDemo = false;
+    private int sessionCount = 0;
     private String facultyUsername;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -179,5 +184,45 @@ public class QuizDto {
 
     public void setQuestions(List<QuestionDto> questions) {
         this.questions = questions;
+    }
+
+    public Boolean getDeleted() {
+        return deleted != null ? deleted : false;
+    }
+
+    public void setDeleted(Boolean deleted) {
+        this.deleted = deleted != null ? deleted : false;
+    }
+
+    public LocalDateTime getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(LocalDateTime deletedAt) {
+        this.deletedAt = deletedAt;
+    }
+
+    public String getDeletedBy() {
+        return deletedBy;
+    }
+
+    public void setDeletedBy(String deletedBy) {
+        this.deletedBy = deletedBy;
+    }
+
+    public Boolean getIsDemo() {
+        return isDemo != null ? isDemo : false;
+    }
+
+    public void setIsDemo(Boolean isDemo) {
+        this.isDemo = isDemo != null ? isDemo : false;
+    }
+
+    public int getSessionCount() {
+        return sessionCount;
+    }
+
+    public void setSessionCount(int sessionCount) {
+        this.sessionCount = sessionCount;
     }
 }

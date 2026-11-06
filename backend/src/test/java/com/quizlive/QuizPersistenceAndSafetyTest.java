@@ -247,17 +247,22 @@ public class QuizPersistenceAndSafetyTest {
 
         final Long quizId = quiz.getId();
 
-        // Attempting to delete this quiz must be blocked with an informative exception
-        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> {
+        // Deleting a quiz with historical student submissions must archive / soft-delete it
+        assertDoesNotThrow(() -> {
             quizService.deleteQuiz(quizId);
         });
 
-        assertTrue(ex.getMessage().contains("Cannot delete this examination because it contains") &&
-                ex.getMessage().contains("student submission(s)"),
-                "Expected explanation regarding academic integrity and student submissions");
+        // Verify quiz is preserved in database but marked as deleted
+        Quiz persistedQuiz = quizRepository.findById(quizId).orElseThrow();
+        assertTrue(persistedQuiz.getDeleted(), "Quiz must be marked as deleted / archived");
+        assertNotNull(persistedQuiz.getDeletedAt(), "Deleted timestamp must be recorded");
 
-        // Verify quiz is NOT deleted
-        assertTrue(quizRepository.existsById(quiz.getId()), "Quiz must remain in database");
+        // Verify student submissions and performance records remain 100% intact
+        assertTrue(submissionRepository.existsById(sub.getId()), "Student submission must remain intact");
+
+        // Verify quiz no longer appears in visible dashboard quiz list
+        List<QuizDto> visibleQuizzes = quizService.getAllQuizzes(true);
+        assertFalse(visibleQuizzes.stream().anyMatch(item -> item.getId().equals(quizId)), "Soft-deleted quiz must not appear in dashboard list");
     }
 
     @Test
@@ -432,10 +437,12 @@ public class QuizPersistenceAndSafetyTest {
         assertTrue(participantRepository.existsById(studentA.getId()), "Quiz A's student must remain untouched");
         assertTrue(liveSessionRepository.existsById(sessionA.getId()), "Quiz A's session must remain untouched");
 
-        // Also verify Quiz A cannot be deleted because of its genuine submission
-        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> {
+        // Also verify Quiz A is archived / soft-deleted without destroying historical records
+        assertDoesNotThrow(() -> {
             quizService.deleteQuiz(quizAId);
         });
-        assertTrue(ex.getMessage().contains("genuine student submission(s)"));
+        Quiz archivedA = quizRepository.findById(quizAId).orElseThrow();
+        assertTrue(archivedA.getDeleted(), "Quiz A must be marked deleted / archived");
+        assertTrue(submissionRepository.existsById(subAId), "Quiz A submissions must remain untouched");
     }
 }

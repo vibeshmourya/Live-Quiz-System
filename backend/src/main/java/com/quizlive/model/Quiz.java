@@ -52,6 +52,18 @@ public class Quiz {
     @Column(nullable = false)
     private Boolean showCorrectAnswers = true;
 
+    @Column(nullable = false)
+    private Boolean deleted = false;
+
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
+    @Column(name = "deleted_by", length = 50)
+    private String deletedBy;
+
+    @Column(name = "is_demo", nullable = false)
+    private Boolean isDemo = false;
+
     @Column(length = 50)
     private String facultyUsername;
 
@@ -188,6 +200,42 @@ public class Quiz {
 
     public void setShowCorrectAnswers(Boolean showCorrectAnswers) {
         this.showCorrectAnswers = showCorrectAnswers != null ? showCorrectAnswers : true;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public Boolean getDeleted() {
+        return deleted != null ? deleted : false;
+    }
+
+    public void setDeleted(Boolean deleted) {
+        this.deleted = deleted != null ? deleted : false;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public LocalDateTime getDeletedAt() {
+        return deletedAt;
+    }
+
+    public void setDeletedAt(LocalDateTime deletedAt) {
+        this.deletedAt = deletedAt;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public String getDeletedBy() {
+        return deletedBy;
+    }
+
+    public void setDeletedBy(String deletedBy) {
+        this.deletedBy = deletedBy;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public Boolean getIsDemo() {
+        return isDemo != null ? isDemo : false;
+    }
+
+    public void setIsDemo(Boolean isDemo) {
+        this.isDemo = isDemo != null ? isDemo : false;
         this.updatedAt = LocalDateTime.now();
     }
 

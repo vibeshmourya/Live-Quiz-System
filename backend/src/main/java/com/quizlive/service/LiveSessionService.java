@@ -337,8 +337,8 @@ public class LiveSessionService {
             revealPayload.put("totalSubmissions", totalSubmissions);
             revealPayload.put("stateVersion", ((long) session.getCurrentQuestionIndex() * 10L) + 5L);
 
-            log.info("[REVEAL_ANSWER] PIN={}, QuestionId={}, CorrectOption={}, TotalSubmissions={}, CorrectSubmissions={}",
-                    pin, currentQuestion.getId(), correctLabel, totalSubmissions, correctSubmissions);
+            log.info("[REVEAL_ANSWER] PIN={}, QuestionId={}, CorrectOption={}, TotalSubmissions={}, CorrectSubmissions={}, Destination={}",
+                    pin, currentQuestion.getId(), correctLabel, totalSubmissions, correctSubmissions, "/topic/session/" + pin);
 
             messagingTemplate.convertAndSend("/topic/session/" + pin,
                     new WsMessage("QUESTION_REVEALED", revealPayload));
@@ -569,8 +569,9 @@ public class LiveSessionService {
             }
         }
 
-        log.info("[CANDIDATE_STATE] PIN={}, CandidateId={}, Status={}, QuestionIndex={}, Selected={}, RevealedCorrect={}, WasCorrect={}",
+        log.info("[CANDIDATE_STATE] PIN={}, CandidateId={}, Status={}, QuestionIndex={}, QuestionId={}, Selected={}, RevealedCorrect={}, WasCorrect={}",
                 pin, safeCandidateId, session.getStatus(), session.getCurrentQuestionIndex(),
+                (session.getStatus() != SessionStatus.WAITING && session.getCurrentQuestionIndex() < session.getQuiz().getQuestions().size() ? session.getQuiz().getQuestions().get(session.getCurrentQuestionIndex()).getId() : "N/A"),
                 resp.getMySelectedLabel(), resp.getRevealedCorrectLabel(), resp.getWasCorrect());
 
         resp.setQuestionStartedAtEpochMs(session.getQuestionStartedAtEpochMs());
@@ -647,20 +648,35 @@ public class LiveSessionService {
     }
 
     private String findAuthoritativeCorrectOptionLabel(Question question) {
-        if (question == null || question.getOptions() == null) {
-            return null;
+        if (question == null) {
+            throw new IllegalStateException("Question cannot be null during answer evaluation");
         }
+        if (question.getOptions() == null || question.getOptions().isEmpty()) {
+            throw new IllegalStateException("Data integrity error: Question ID " + question.getId() + " has no options defined in the database");
+        }
+        String correctLabel = null;
+        int correctCount = 0;
         for (AnswerOption opt : question.getOptions()) {
             if (Boolean.TRUE.equals(opt.getIsCorrect())) {
                 String label = opt.getOptionLabel();
                 if (label != null && !label.trim().isEmpty()) {
-                    return label.trim().toUpperCase();
+                    if (correctLabel == null) {
+                        correctLabel = label.trim().toUpperCase();
+                    }
+                    correctCount++;
                 }
             }
         }
-        log.warn("[DATA INTEGRITY WARNING] Question ID {} ('{}') has no option marked with isCorrect=true!",
-                question.getId(), question.getQuestionText());
-        return null;
+        if (correctCount == 0) {
+            log.error("[DATA INTEGRITY ERROR] Question ID {} ('{}') has NO option marked with isCorrect=true in database!",
+                    question.getId(), question.getQuestionText());
+            throw new IllegalStateException("Data integrity error: Question ID " + question.getId() + " has no correct option configured in database");
+        }
+        if (correctCount > 1) {
+            log.warn("[DATA INTEGRITY WARNING] Question ID {} ('{}') has MULTIPLE options ({}) marked isCorrect=true! Using first matching option: {}",
+                    question.getId(), question.getQuestionText(), correctCount, correctLabel);
+        }
+        return correctLabel;
     }
 
     private QuestionDto toQuestionDto(Question q) {

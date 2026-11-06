@@ -586,9 +586,9 @@ public class LiveExamSynchronizationAndReliabilityTest {
         LiveSession session = liveSessionService.createLiveSession(testQuiz.getId());
         String pin = session.getPin();
 
-        // 5 candidates join and acknowledge rules
+        // 6 candidates join and acknowledge rules
         List<Participant> candidates = new ArrayList<>();
-        for (int i = 1; i <= 5; i++) {
+        for (int i = 1; i <= 6; i++) {
             String cid = "cand-q3-" + i;
             candidates.add(liveSessionService.joinSession(new JoinRequest(pin, "Student " + i, cid)));
             liveSessionService.acknowledgeRules(pin, cid);
@@ -621,15 +621,23 @@ public class LiveExamSynchronizationAndReliabilityTest {
         req3.setOptionLabel("C");
         liveSessionService.submitAnswer(req3);
 
-        // Candidate 4 does not answer (unanswered / time up)
+        // Candidate 4 selects Option D (Incorrect)
+        SubmitAnswerRequest req4 = new SubmitAnswerRequest();
+        req4.setSessionPin(pin);
+        req4.setCandidateId(candidates.get(3).getCandidateId());
+        req4.setQuestionId(questions.get(2).getId());
+        req4.setOptionLabel("D");
+        liveSessionService.submitAnswer(req4);
 
-        // Candidate 5 selects Option A (Correct), will simulate reload during reveal
-        SubmitAnswerRequest req5 = new SubmitAnswerRequest();
-        req5.setSessionPin(pin);
-        req5.setCandidateId(candidates.get(4).getCandidateId());
-        req5.setQuestionId(questions.get(2).getId());
-        req5.setOptionLabel("A");
-        liveSessionService.submitAnswer(req5);
+        // Candidate 5 does not answer (unanswered / time up)
+
+        // Candidate 6 selects Option A (Correct), will simulate reload during reveal
+        SubmitAnswerRequest req6 = new SubmitAnswerRequest();
+        req6.setSessionPin(pin);
+        req6.setCandidateId(candidates.get(5).getCandidateId());
+        req6.setQuestionId(questions.get(2).getId());
+        req6.setOptionLabel("A");
+        liveSessionService.submitAnswer(req6);
 
         // Verify that BEFORE faculty reveals answer, correct answer is NEVER exposed to candidate
         CandidateStateResponse cand1Active = liveSessionService.getCandidateSessionState(pin, candidates.get(0).getCandidateId());
@@ -642,7 +650,7 @@ public class LiveExamSynchronizationAndReliabilityTest {
         // Faculty reveals answer
         SessionStateResponse host = liveSessionService.revealAnswer(pin);
         assertEquals("A", host.getCorrectOptionLabel(), "Host must authoritative know correct option is A");
-        assertEquals(50.0, host.getCorrectPercentage(), 0.01, "2 of 4 submissions correct = 50%");
+        assertEquals(40.0, host.getCorrectPercentage(), 0.01, "2 of 5 submissions correct = 40%");
 
         // Verify Candidate 1: Selected A -> Must be evaluated as Correct, verdict true, revealed label "A"
         CandidateStateResponse cand1State = liveSessionService.getCandidateSessionState(pin, candidates.get(0).getCandidateId());
@@ -665,18 +673,24 @@ public class LiveExamSynchronizationAndReliabilityTest {
         assertEquals("C", cand3State.getMySelectedLabel());
         assertEquals(Boolean.FALSE, cand3State.getWasCorrect(), "Candidate 3 selected C, so wasCorrect must be false");
 
-        // Verify Candidate 4: Unanswered -> verdict false, hasSubmitted false, revealed label "A"
+        // Verify Candidate 4: Selected D -> Must be evaluated as Incorrect, verdict false, revealed label "A"
         CandidateStateResponse cand4State = liveSessionService.getCandidateSessionState(pin, candidates.get(3).getCandidateId());
         assertEquals("A", cand4State.getRevealedCorrectLabel());
-        assertNull(cand4State.getMySelectedLabel(), "Unanswered candidate has no selected label");
-        assertFalse(cand4State.isHasSubmitted(), "Unanswered candidate hasSubmitted must be false");
-        assertEquals(Boolean.FALSE, cand4State.getWasCorrect(), "Unanswered candidate wasCorrect must be false");
+        assertEquals("D", cand4State.getMySelectedLabel());
+        assertEquals(Boolean.FALSE, cand4State.getWasCorrect(), "Candidate 4 selected D, so wasCorrect must be false");
 
-        // Verify Candidate 5: Simulates page reload / reconnection after reveal -> restores state with wasCorrect=true and label "A"
-        CandidateStateResponse cand5Reloaded = liveSessionService.getCandidateSessionState(pin, candidates.get(4).getCandidateId().trim());
-        assertEquals("A", cand5Reloaded.getRevealedCorrectLabel(), "Candidate 5 reloaded must restore 'A'");
-        assertEquals("A", cand5Reloaded.getMySelectedLabel());
-        assertEquals(Boolean.TRUE, cand5Reloaded.getWasCorrect(), "Candidate 5 reloaded must evaluate to true");
+        // Verify Candidate 5: Unanswered -> verdict false, hasSubmitted false, revealed label "A"
+        CandidateStateResponse cand5State = liveSessionService.getCandidateSessionState(pin, candidates.get(4).getCandidateId());
+        assertEquals("A", cand5State.getRevealedCorrectLabel());
+        assertNull(cand5State.getMySelectedLabel(), "Unanswered candidate has no selected label");
+        assertFalse(cand5State.isHasSubmitted(), "Unanswered candidate hasSubmitted must be false");
+        assertEquals(Boolean.FALSE, cand5State.getWasCorrect(), "Unanswered candidate wasCorrect must be false");
+
+        // Verify Candidate 6: Simulates page reload / reconnection after reveal -> restores state with wasCorrect=true and label "A"
+        CandidateStateResponse cand6Reloaded = liveSessionService.getCandidateSessionState(pin, candidates.get(5).getCandidateId().trim());
+        assertEquals("A", cand6Reloaded.getRevealedCorrectLabel(), "Candidate 6 reloaded must restore 'A'");
+        assertEquals("A", cand6Reloaded.getMySelectedLabel());
+        assertEquals(Boolean.TRUE, cand6Reloaded.getWasCorrect(), "Candidate 6 reloaded must evaluate to true");
 
         // Advance to Question 4 (index 3)
         liveSessionService.advanceOrEnd(pin);

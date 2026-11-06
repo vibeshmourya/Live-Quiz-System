@@ -17,7 +17,6 @@ export default function CandidateQuizPage({
   const selectedLabelRef = useRef(selectedLabel);
   selectedLabelRef.current = selectedLabel;
   const answersMapRef = useRef({});
-  const lastStateVersionRef = useRef(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [timerRemaining, setTimerRemaining] = useState(0);
 
@@ -66,69 +65,36 @@ export default function CandidateQuizPage({
     try {
       setLoading(true);
       const data = await getCandidateState(pin, candidateId);
-      if (!data) return;
-
-      // Drop stale REST response if incoming stateVersion is older than what we already processed
-      if (data.stateVersion !== undefined && data.stateVersion !== null) {
-        if (Number(data.stateVersion) < lastStateVersionRef.current) {
-          return;
-        }
-        lastStateVersionRef.current = Math.max(lastStateVersionRef.current, Number(data.stateVersion));
-      }
 
       setState((prev) => {
+        if (!data) return prev;
+
         // Preserve client-cached answer if incoming data lacks it
-        const currentQId = data.questionId || data.currentQuestion?.id;
+        const currentQId = data.currentQuestion?.id || prev?.currentQuestion?.id;
         const cachedAnswer = currentQId ? answersMapRef.current[currentQId] : null;
-        const incomingQIndex = data.questionIndex !== undefined ? data.questionIndex : data.currentQuestionIndex;
-        const isSameQuestion = Boolean(
-          (prev?.currentQuestionIndex !== undefined && prev.currentQuestionIndex === incomingQIndex) ||
-          (currentQId && prev?.currentQuestion?.id === currentQId)
-        );
-
-        // Authoritative selection
-        const mySelected = data.selectedOptionLabel || data.mySelectedLabel || cachedAnswer ||
-          (isSameQuestion ? (selectedLabelRef.current || prev?.selectedOptionLabel || prev?.mySelectedLabel) : null) || null;
-
-        const hasSubmitted = Boolean(data.hasSubmitted || mySelected);
+        const mySelected = data.mySelectedLabel || cachedAnswer || selectedLabelRef.current || prev?.mySelectedLabel || null;
 
         // Authoritative correct label resolution:
-        // ONLY populated when question is revealed or session finished, and preserved if same question
-        let resolvedCorrect = null;
-        if (data.status === 'QUESTION_REVEALED' || data.status === 'FINISHED' || (isSameQuestion && prev?.status === 'QUESTION_REVEALED')) {
-          resolvedCorrect = data.correctOptionLabel || data.revealedCorrectLabel ||
-            (isSameQuestion ? (prev?.correctOptionLabel || prev?.revealedCorrectLabel || null) : null);
-        }
+        // Use incoming label, or preserve already known revealed label
+        const resolvedCorrect = data.revealedCorrectLabel || data.correctOptionLabel || prev?.revealedCorrectLabel || prev?.correctOptionLabel || null;
 
         // Authoritative correctness evaluation:
         let resolvedWasCorrect = null;
-        if (data.status === 'QUESTION_REVEALED' || data.status === 'FINISHED' || (isSameQuestion && prev?.status === 'QUESTION_REVEALED')) {
+        if (data.status === 'QUESTION_REVEALED' || data.status === 'FINISHED') {
           if (data.wasCorrect !== undefined && data.wasCorrect !== null) {
             resolvedWasCorrect = Boolean(data.wasCorrect);
-          } else if (hasSubmitted && mySelected && resolvedCorrect) {
-            resolvedWasCorrect = mySelected.trim().toUpperCase() === resolvedCorrect.trim().toUpperCase();
-          } else if (!hasSubmitted) {
-            resolvedWasCorrect = false;
-          } else if (isSameQuestion && prev?.wasCorrect !== undefined && prev?.wasCorrect !== null) {
+          } else if (resolvedCorrect && mySelected) {
+            resolvedWasCorrect = resolvedCorrect.trim().toUpperCase() === mySelected.trim().toUpperCase();
+          } else if (prev?.wasCorrect !== undefined && prev?.wasCorrect !== null) {
             resolvedWasCorrect = prev.wasCorrect;
-          } else {
-            resolvedWasCorrect = null;
           }
         }
-
-        // Guard against regressing status from QUESTION_REVEALED to QUESTION_ACTIVE for the same question
-        const effectiveStatus = (isSameQuestion && prev?.status === 'QUESTION_REVEALED' && data.status === 'QUESTION_ACTIVE')
-          ? 'QUESTION_REVEALED'
-          : data.status;
 
         return {
           ...prev,
           ...data,
-          status: effectiveStatus,
-          currentQuestionIndex: incomingQIndex !== undefined ? incomingQIndex : prev?.currentQuestionIndex,
           mySelectedLabel: mySelected,
-          selectedOptionLabel: mySelected,
-          hasSubmitted,
+          hasSubmitted: Boolean(data.hasSubmitted || mySelected),
           revealedCorrectLabel: resolvedCorrect,
           correctOptionLabel: resolvedCorrect,
           wasCorrect: resolvedWasCorrect,
@@ -138,12 +104,11 @@ export default function CandidateQuizPage({
       if (data?.myIncidentCount !== undefined) {
         setIncidentCount(data.myIncidentCount);
       }
-      const currentQId = data?.currentQuestion?.id;
-      const cachedAnswer = currentQId ? answersMapRef.current[currentQId] : null;
-      const effectiveSelected = data?.mySelectedLabel || cachedAnswer || null;
-      setSelectedLabel(effectiveSelected);
-      if (currentQId && data?.mySelectedLabel) {
-        answersMapRef.current[currentQId] = data.mySelectedLabel;
+      if (data?.hasSubmitted && data?.mySelectedLabel) {
+        if (data.currentQuestion?.id) {
+          answersMapRef.current[data.currentQuestion.id] = data.mySelectedLabel;
+        }
+        setSelectedLabel(data.mySelectedLabel);
       }
       if (data?.status === 'FINISHED') {
         onFinished(data);
@@ -302,13 +267,6 @@ export default function CandidateQuizPage({
       (event) => {
         if (event.type === 'QUESTION_STARTED') {
           const payload = event.payload;
-          const qIdx = payload.questionIndex !== undefined ? payload.questionIndex : 0;
-          const version = payload.stateVersion !== undefined ? Number(payload.stateVersion) : ((qIdx * 10) + 1);
-          if (version < lastStateVersionRef.current) {
-            return;
-          }
-          lastStateVersionRef.current = Math.max(lastStateVersionRef.current, version);
-
           const qId = payload.question?.id;
           const previousAnswer = qId ? answersMapRef.current[qId] : null;
 
@@ -334,72 +292,40 @@ export default function CandidateQuizPage({
               hasSubmitted: Boolean(previousAnswer),
               mySelectedLabel: previousAnswer || null,
               revealedCorrectLabel: null,
-              correctOptionLabel: null,
               wasCorrect: null,
-              stateVersion: version,
             };
           });
           setSelectedLabel(previousAnswer || null);
         } else if (event.type === 'QUESTION_REVEALED') {
           const payload = event.payload || {};
-          const qIdx = payload.questionIndex !== undefined ? payload.questionIndex : 0;
-          const version = payload.stateVersion !== undefined ? Number(payload.stateVersion) : ((qIdx * 10) + 5);
-          if (version < lastStateVersionRef.current) {
-            return;
-          }
-          lastStateVersionRef.current = Math.max(lastStateVersionRef.current, version);
-
-          const myVerdict = payload.candidateVerdicts && candidateId ? payload.candidateVerdicts[candidateId] : null;
-          const revealedCorrect = (payload.correctOptionLabel || payload.revealedCorrectLabel || payload.correctAnswer || '').trim().toUpperCase();
-
           setState((prev) => {
             if (!prev) return prev;
             if (payload.questionIndex !== undefined && prev.currentQuestionIndex > payload.questionIndex) {
               return prev; // guard against stale older question reveal
             }
             const currentQId = prev.currentQuestion?.id;
-            const fallbackChoice = (selectedLabelRef.current || prev.selectedOptionLabel || prev.mySelectedLabel || (currentQId ? answersMapRef.current[currentQId] : null) || '').trim().toUpperCase();
-            const sameQuestion = payload.questionIndex === undefined || payload.questionIndex === prev.currentQuestionIndex;
-            const fallbackPrevCorrect = sameQuestion ? (prev.correctOptionLabel || prev.revealedCorrectLabel || '') : '';
-            const effectiveCorrect = revealedCorrect || fallbackPrevCorrect;
-
-            const mySelected = myVerdict ? (myVerdict.selectedOptionLabel || null) : (fallbackChoice || null);
-            const hasSubmitted = myVerdict ? Boolean(myVerdict.hasSubmitted) : Boolean(prev.hasSubmitted || fallbackChoice);
+            const activeChoice = (selectedLabelRef.current || prev.mySelectedLabel || (currentQId ? answersMapRef.current[currentQId] : null) || '').trim().toUpperCase();
+            const revealedCorrect = (payload.correctOptionLabel || payload.revealedCorrectLabel || payload.correctAnswer || prev.revealedCorrectLabel || prev.correctOptionLabel || '').trim().toUpperCase();
 
             let isCorrect = null;
-            if (myVerdict && myVerdict.wasCorrect !== undefined && myVerdict.wasCorrect !== null) {
-              isCorrect = Boolean(myVerdict.wasCorrect);
-            } else if (payload.wasCorrect !== undefined && payload.wasCorrect !== null) {
+            if (payload.wasCorrect !== undefined && payload.wasCorrect !== null) {
               isCorrect = Boolean(payload.wasCorrect);
-            } else if (hasSubmitted && mySelected && effectiveCorrect) {
-              isCorrect = mySelected.trim().toUpperCase() === effectiveCorrect.trim().toUpperCase();
-            } else if (!hasSubmitted) {
-              isCorrect = false;
+            } else if (activeChoice && revealedCorrect) {
+              isCorrect = activeChoice === revealedCorrect;
             } else if (prev.wasCorrect !== undefined && prev.wasCorrect !== null) {
               isCorrect = prev.wasCorrect;
             } else {
-              isCorrect = null;
+              isCorrect = false;
             }
 
             return {
               ...prev,
               status: 'QUESTION_REVEALED',
-              mySelectedLabel: mySelected,
-              selectedOptionLabel: mySelected,
-              hasSubmitted,
-              revealedCorrectLabel: effectiveCorrect || null,
-              correctOptionLabel: effectiveCorrect || null,
+              revealedCorrectLabel: revealedCorrect || prev.revealedCorrectLabel || null,
+              correctOptionLabel: revealedCorrect || prev.correctOptionLabel || null,
               wasCorrect: isCorrect,
-              stateVersion: version,
             };
           });
-
-          if (myVerdict && myVerdict.selectedOptionLabel) {
-            setSelectedLabel(myVerdict.selectedOptionLabel);
-          }
-
-          // Instantly sync authoritative candidate evaluation from the committed transaction
-          loadCandidateState();
         } else if (event.type === 'PARTICIPANT_JOINED') {
           if (event.payload.participants && Array.isArray(event.payload.participants)) {
             setParticipants(event.payload.participants);
@@ -428,13 +354,6 @@ export default function CandidateQuizPage({
       unsubscribe();
     };
   }, [pin]);
-
-  // Auto-resolve revealed answer if state status is QUESTION_REVEALED but correct label is missing
-  useEffect(() => {
-    if (state?.status === 'QUESTION_REVEALED' && !state?.revealedCorrectLabel && !state?.correctOptionLabel) {
-      loadCandidateState();
-    }
-  }, [state?.status, state?.revealedCorrectLabel, state?.correctOptionLabel]);
 
   // Synchronized countdown timer
   useEffect(() => {
@@ -701,12 +620,10 @@ export default function CandidateQuizPage({
   const currentQ = state.currentQuestion;
   const isRevealed = state.status === 'QUESTION_REVEALED';
   const allowReselect = Boolean(state.allowReselection);
-  const displayCorrectLabel = (state.correctOptionLabel || state.revealedCorrectLabel || '').trim().toUpperCase();
-  const candidateChoice = (selectedLabel || state.selectedOptionLabel || state.mySelectedLabel || (currentQ?.id ? answersMapRef.current[currentQ.id] : null) || '').trim().toUpperCase() || null;
-  const hasSubmitted = Boolean(state.hasSubmitted || !!selectedLabel || !!candidateChoice);
-  const isStudentCorrect = isRevealed && hasSubmitted && (
-    state.wasCorrect === true || Boolean(candidateChoice && displayCorrectLabel && candidateChoice === displayCorrectLabel)
-  );
+  const displayCorrectLabel = (state.revealedCorrectLabel || state.correctOptionLabel || '').trim().toUpperCase();
+  const candidateChoice = (selectedLabel || state.mySelectedLabel || (currentQ?.id ? answersMapRef.current[currentQ.id] : null) || '').trim().toUpperCase() || null;
+  const isStudentCorrect = state.wasCorrect === true || Boolean(candidateChoice && displayCorrectLabel && candidateChoice === displayCorrectLabel);
+  const hasSubmitted = state.hasSubmitted || !!selectedLabel || !!candidateChoice;
   const isLocked = hasSubmitted && !allowReselect;
   const isTimeUp = timerRemaining <= 0;
 
@@ -801,8 +718,11 @@ export default function CandidateQuizPage({
           {currentQ?.options?.map((opt) => {
             const optLabel = (opt.optionLabel || '').trim().toUpperCase();
             const isSelected = candidateChoice === optLabel;
-            const isCorrectOption = isRevealed && Boolean(displayCorrectLabel && optLabel === displayCorrectLabel);
-            const isWrongSelection = isRevealed && isSelected && !isStudentCorrect && Boolean(displayCorrectLabel && optLabel !== displayCorrectLabel);
+            const isCorrectOption = isRevealed && (
+              (displayCorrectLabel && optLabel === displayCorrectLabel) ||
+              (isStudentCorrect && isSelected)
+            );
+            const isWrongSelection = isRevealed && isSelected && !isCorrectOption && !isStudentCorrect;
 
             let buttonStyle = 'bg-white border-slate-200 text-slate-800 active:scale-[0.99]';
 
@@ -856,20 +776,20 @@ export default function CandidateQuizPage({
             className={`p-4 rounded-xl text-center text-sm font-semibold border ${
               isStudentCorrect
                 ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                : !hasSubmitted
-                ? 'bg-amber-50 border-amber-200 text-amber-800'
-                : 'bg-red-50 border-red-200 text-red-800'
+                : candidateChoice
+                ? 'bg-red-50 border-red-200 text-red-800'
+                : 'bg-slate-100 border-slate-200 text-slate-700'
             }`}
           >
             {isStudentCorrect
               ? '✓ Correct! Well done.'
-              : !hasSubmitted
+              : candidateChoice
               ? (displayCorrectLabel
-                  ? `Unanswered. The correct answer was ${displayCorrectLabel}.`
-                  : 'Question ended. No answer submitted.')
-              : (displayCorrectLabel
                   ? `✕ Incorrect. The correct answer was ${displayCorrectLabel}.`
-                  : '✕ Incorrect.')}
+                  : `✕ Incorrect. Verification in progress...`)
+              : (displayCorrectLabel
+                  ? `Time up! The correct answer was ${displayCorrectLabel}.`
+                  : `Time up! Verification in progress...`)}
           </div>
         ) : hasSubmitted ? (
           <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl text-center text-xs font-medium text-indigo-900 shadow-xs">

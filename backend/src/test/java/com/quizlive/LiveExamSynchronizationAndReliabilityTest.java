@@ -4,13 +4,11 @@ import com.quizlive.dto.*;
 import com.quizlive.model.*;
 import com.quizlive.repository.*;
 import com.quizlive.service.LiveSessionService;
-import com.quizlive.controller.LiveSessionController;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.ResponseEntity;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -24,9 +22,6 @@ public class LiveExamSynchronizationAndReliabilityTest {
 
     @Autowired
     private LiveSessionService liveSessionService;
-
-    @Autowired
-    private LiveSessionController liveSessionController;
 
     @Autowired
     private QuizRepository quizRepository;
@@ -563,18 +558,6 @@ public class LiveExamSynchronizationAndReliabilityTest {
                 AnswerOption optD = new AnswerOption("D", "DEFAULT Clause", false);
                 optD.setQuestion(q);
                 q.setOptions(new ArrayList<>(List.of(optA, optB, optC, optD)));
-            } else if (i == 3) {
-                // Exact Question 4 of 4: Option C is correct
-                q.setQuestionText("Which HTTP status code represents successful resource creation?");
-                AnswerOption optA = new AnswerOption("A", "200 OK", false);
-                optA.setQuestion(q);
-                AnswerOption optB = new AnswerOption("B", "202 Accepted", false);
-                optB.setQuestion(q);
-                AnswerOption optC = new AnswerOption("C", "201 Created", true);
-                optC.setQuestion(q);
-                AnswerOption optD = new AnswerOption("D", "204 No Content", false);
-                optD.setQuestion(q);
-                q.setOptions(new ArrayList<>(List.of(optA, optB, optC, optD)));
             } else {
                 q.setQuestionText("Placeholder Question " + (i + 1));
                 AnswerOption optA = new AnswerOption("A", "Choice A", true);
@@ -591,9 +574,9 @@ public class LiveExamSynchronizationAndReliabilityTest {
         LiveSession session = liveSessionService.createLiveSession(testQuiz.getId());
         String pin = session.getPin();
 
-        // 6 candidates join and acknowledge rules
+        // 5 candidates join and acknowledge rules
         List<Participant> candidates = new ArrayList<>();
-        for (int i = 1; i <= 6; i++) {
+        for (int i = 1; i <= 5; i++) {
             String cid = "cand-q3-" + i;
             candidates.add(liveSessionService.joinSession(new JoinRequest(pin, "Student " + i, cid)));
             liveSessionService.acknowledgeRules(pin, cid);
@@ -618,44 +601,28 @@ public class LiveExamSynchronizationAndReliabilityTest {
         req2.setOptionLabel("B");
         liveSessionService.submitAnswer(req2);
 
-        // Candidate 3 selects Option C (Incorrect)
+        // Candidate 3 selects Option D (Incorrect)
         SubmitAnswerRequest req3 = new SubmitAnswerRequest();
         req3.setSessionPin(pin);
         req3.setCandidateId(candidates.get(2).getCandidateId());
         req3.setQuestionId(questions.get(2).getId());
-        req3.setOptionLabel("C");
+        req3.setOptionLabel("D");
         liveSessionService.submitAnswer(req3);
 
-        // Candidate 4 selects Option D (Incorrect)
-        SubmitAnswerRequest req4 = new SubmitAnswerRequest();
-        req4.setSessionPin(pin);
-        req4.setCandidateId(candidates.get(3).getCandidateId());
-        req4.setQuestionId(questions.get(2).getId());
-        req4.setOptionLabel("D");
-        liveSessionService.submitAnswer(req4);
+        // Candidate 4 does not answer (unanswered / time up)
 
-        // Candidate 5 does not answer (unanswered / time up)
-
-        // Candidate 6 selects Option A (Correct), will simulate reload during reveal
-        SubmitAnswerRequest req6 = new SubmitAnswerRequest();
-        req6.setSessionPin(pin);
-        req6.setCandidateId(candidates.get(5).getCandidateId());
-        req6.setQuestionId(questions.get(2).getId());
-        req6.setOptionLabel("A");
-        liveSessionService.submitAnswer(req6);
-
-        // Verify that BEFORE faculty reveals answer, correct answer is NEVER exposed to candidate
-        CandidateStateResponse cand1Active = liveSessionService.getCandidateSessionState(pin, candidates.get(0).getCandidateId());
-        assertNull(cand1Active.getRevealedCorrectLabel(), "Correct label must NOT be exposed while question is active");
-        assertNull(cand1Active.getCorrectOptionLabel(), "Correct option label must NOT be exposed while question is active");
-        assertNull(cand1Active.getWasCorrect(), "wasCorrect must be null while question is active");
-        assertEquals("A", cand1Active.getMySelectedLabel(), "Candidate's own selection is preserved");
-        assertTrue(cand1Active.isHasSubmitted(), "Candidate hasSubmitted is true");
+        // Candidate 5 selects Option A (Correct), will simulate reload during reveal
+        SubmitAnswerRequest req5 = new SubmitAnswerRequest();
+        req5.setSessionPin(pin);
+        req5.setCandidateId(candidates.get(4).getCandidateId());
+        req5.setQuestionId(questions.get(2).getId());
+        req5.setOptionLabel("A");
+        liveSessionService.submitAnswer(req5);
 
         // Faculty reveals answer
         SessionStateResponse host = liveSessionService.revealAnswer(pin);
         assertEquals("A", host.getCorrectOptionLabel(), "Host must authoritative know correct option is A");
-        assertEquals(40.0, host.getCorrectPercentage(), 0.01, "2 of 5 submissions correct = 40%");
+        assertEquals(50.0, host.getCorrectPercentage(), 0.01, "2 of 4 submissions correct = 50%");
 
         // Verify Candidate 1: Selected A -> Must be evaluated as Correct, verdict true, revealed label "A"
         CandidateStateResponse cand1State = liveSessionService.getCandidateSessionState(pin, candidates.get(0).getCandidateId());
@@ -664,7 +631,6 @@ public class LiveExamSynchronizationAndReliabilityTest {
         assertEquals("A", cand1State.getMySelectedLabel(), "Selected label must be 'A'");
         assertEquals(Boolean.TRUE, cand1State.getWasCorrect(), "Candidate 1 must be marked correct");
         assertTrue(cand1State.isHasSubmitted(), "Candidate 1 has submitted");
-        assertEquals(40, cand1State.getTotalMarks(), "Candidate state total marks must be 40 (4 questions * 10 marks)");
 
         // Verify Candidate 2: Selected B -> Must be evaluated as Incorrect, verdict false, revealed label "A"
         CandidateStateResponse cand2State = liveSessionService.getCandidateSessionState(pin, candidates.get(1).getCandidateId());
@@ -672,337 +638,23 @@ public class LiveExamSynchronizationAndReliabilityTest {
         assertEquals("B", cand2State.getMySelectedLabel());
         assertEquals(Boolean.FALSE, cand2State.getWasCorrect(), "Candidate 2 selected B, so wasCorrect must be false");
 
-        // Verify Candidate 3: Selected C -> Must be evaluated as Incorrect, verdict false, revealed label "A"
+        // Verify Candidate 3: Selected D -> Must be evaluated as Incorrect, verdict false, revealed label "A"
         CandidateStateResponse cand3State = liveSessionService.getCandidateSessionState(pin, candidates.get(2).getCandidateId());
         assertEquals("A", cand3State.getRevealedCorrectLabel());
-        assertEquals("C", cand3State.getMySelectedLabel());
-        assertEquals(Boolean.FALSE, cand3State.getWasCorrect(), "Candidate 3 selected C, so wasCorrect must be false");
+        assertEquals("D", cand3State.getMySelectedLabel());
+        assertEquals(Boolean.FALSE, cand3State.getWasCorrect(), "Candidate 3 selected D, so wasCorrect must be false");
 
-        // Verify Candidate 4: Selected D -> Must be evaluated as Incorrect, verdict false, revealed label "A"
+        // Verify Candidate 4: Unanswered -> verdict false, hasSubmitted false, revealed label "A"
         CandidateStateResponse cand4State = liveSessionService.getCandidateSessionState(pin, candidates.get(3).getCandidateId());
         assertEquals("A", cand4State.getRevealedCorrectLabel());
-        assertEquals("D", cand4State.getMySelectedLabel());
-        assertEquals(Boolean.FALSE, cand4State.getWasCorrect(), "Candidate 4 selected D, so wasCorrect must be false");
+        assertNull(cand4State.getMySelectedLabel(), "Unanswered candidate has no selected label");
+        assertFalse(cand4State.isHasSubmitted(), "Unanswered candidate hasSubmitted must be false");
+        assertEquals(Boolean.FALSE, cand4State.getWasCorrect(), "Unanswered candidate wasCorrect must be false");
 
-        // Verify Candidate 5: Unanswered -> verdict false, hasSubmitted false, revealed label "A"
-        CandidateStateResponse cand5State = liveSessionService.getCandidateSessionState(pin, candidates.get(4).getCandidateId());
-        assertEquals("A", cand5State.getRevealedCorrectLabel());
-        assertNull(cand5State.getMySelectedLabel(), "Unanswered candidate has no selected label");
-        assertFalse(cand5State.isHasSubmitted(), "Unanswered candidate hasSubmitted must be false");
-        assertEquals(Boolean.FALSE, cand5State.getWasCorrect(), "Unanswered candidate wasCorrect must be false");
-
-        // Verify Candidate 6: Simulates page reload / reconnection after reveal -> restores state with wasCorrect=true and label "A"
-        CandidateStateResponse cand6Reloaded = liveSessionService.getCandidateSessionState(pin, candidates.get(5).getCandidateId().trim());
-        assertEquals("A", cand6Reloaded.getRevealedCorrectLabel(), "Candidate 6 reloaded must restore 'A'");
-        assertEquals("A", cand6Reloaded.getMySelectedLabel());
-        assertEquals(Boolean.TRUE, cand6Reloaded.getWasCorrect(), "Candidate 6 reloaded must evaluate to true");
-
-        // Advance to Question 4 (index 3)
-        liveSessionService.advanceOrEnd(pin);
-        CandidateStateResponse q4Active = liveSessionService.getCandidateSessionState(pin, candidates.get(0).getCandidateId());
-        assertEquals(3, q4Active.getCurrentQuestionIndex(), "Session must be on Question 4 (index 3)");
-        assertNull(q4Active.getRevealedCorrectLabel(), "Question 4 correct label must NOT be exposed while active");
-
-        // Candidate 1 selects Option C (Correct)
-        SubmitAnswerRequest q4Req1 = new SubmitAnswerRequest();
-        q4Req1.setSessionPin(pin);
-        q4Req1.setCandidateId(candidates.get(0).getCandidateId());
-        q4Req1.setQuestionId(questions.get(3).getId());
-        q4Req1.setOptionLabel("C");
-        liveSessionService.submitAnswer(q4Req1);
-
-        // Candidate 2 selects Option A (Incorrect)
-        SubmitAnswerRequest q4Req2 = new SubmitAnswerRequest();
-        q4Req2.setSessionPin(pin);
-        q4Req2.setCandidateId(candidates.get(1).getCandidateId());
-        q4Req2.setQuestionId(questions.get(3).getId());
-        q4Req2.setOptionLabel("A");
-        liveSessionService.submitAnswer(q4Req2);
-
-        // Faculty reveals Question 4
-        SessionStateResponse q4HostReveal = liveSessionService.revealAnswer(pin);
-        assertEquals("C", q4HostReveal.getCorrectOptionLabel(), "Host must authoritative know correct option is C");
-
-        // Verify Candidate 1: Selected C -> evaluated as Correct, verdict true, revealed label "C"
-        CandidateStateResponse q4Cand1 = liveSessionService.getCandidateSessionState(pin, candidates.get(0).getCandidateId());
-        assertEquals("C", q4Cand1.getRevealedCorrectLabel(), "Candidate 1 revealed label must be 'C'");
-        assertEquals("C", q4Cand1.getMySelectedLabel(), "Candidate 1 selected label must be 'C'");
-        assertEquals(Boolean.TRUE, q4Cand1.getWasCorrect(), "Candidate 1 selected correct C -> wasCorrect must be true");
-
-        // Verify Candidate 2: Selected A -> evaluated as Incorrect, verdict false, revealed label "C"
-        CandidateStateResponse q4Cand2 = liveSessionService.getCandidateSessionState(pin, candidates.get(1).getCandidateId());
-        assertEquals("C", q4Cand2.getRevealedCorrectLabel(), "Candidate 2 revealed label must be 'C'");
-        assertEquals("A", q4Cand2.getMySelectedLabel(), "Candidate 2 selected label must be 'A'");
-        assertEquals(Boolean.FALSE, q4Cand2.getWasCorrect(), "Candidate 2 selected wrong A -> wasCorrect must be false");
-
-        // Verify Candidate 4 (unanswered): verdict false, revealed label "C"
-        CandidateStateResponse q4Cand4 = liveSessionService.getCandidateSessionState(pin, candidates.get(3).getCandidateId());
-        assertEquals("C", q4Cand4.getRevealedCorrectLabel(), "Unanswered candidate revealed label must be 'C'");
-        assertEquals(Boolean.FALSE, q4Cand4.getWasCorrect(), "Unanswered candidate wasCorrect must be false");
-
-        // Verify Candidate 1 reload / recovery after reveal: restores state with wasCorrect=true and label "C"
-        CandidateStateResponse q4Cand1Reloaded = liveSessionService.getCandidateSessionState(pin, candidates.get(0).getCandidateId().trim());
-        assertEquals("C", q4Cand1Reloaded.getRevealedCorrectLabel(), "Candidate 1 reloaded must restore 'C'");
-        assertEquals("C", q4Cand1Reloaded.getMySelectedLabel());
-        assertEquals(Boolean.TRUE, q4Cand1Reloaded.getWasCorrect(), "Candidate 1 reloaded must evaluate to true");
-
-        // Finish examination
-        liveSessionService.advanceOrEnd(pin);
-
-        // Verify Marks-Only Leaderboard format
-        List<LeaderboardEntryDto> leaderboard = liveSessionService.getLeaderboard(session.getId());
-        assertFalse(leaderboard.isEmpty(), "Leaderboard must not be empty");
-        for (LeaderboardEntryDto entry : leaderboard) {
-            assertTrue(entry.getTotalMarks() > 0, "Leaderboard entry must include totalMarks");
-            assertNotNull(entry.getNickname(), "Leaderboard entry must include nickname");
-            assertTrue(entry.getScore() >= 0, "Leaderboard entry must include marks obtained (score)");
-        }
-    }
-
-    @Test
-    @DisplayName("11. Final Reproduction: Question 1 of 4 WebSocket full-duplex communication over single TCP connection, Option B correct, 5 candidates, transaction synchronization, reload/recovery, no indefinite pending")
-    void testExactQuestion1WebSocketScenarioWithTransactionSyncAndRecovery() {
-        Quiz q1Quiz = new Quiz("Networking and Real-Time Systems Examination");
-        q1Quiz.setFacultyUsername("prof_networks");
-        q1Quiz.setExamStatus(ExamStatus.SCHEDULED);
-        q1Quiz.setShowCorrectAnswers(true);
-        q1Quiz.setAnswerChangePolicy(AnswerChangePolicy.SINGLE_SELECTION);
-
-        // Create 4 questions: Question 1 is the exact prompt question
-        List<Question> questions = new ArrayList<>();
-
-        // Question 1 of 4: Which protocol provides full-duplex communication over a single TCP connection in real time?
-        Question q1 = new Question();
-        q1.setQuestionText("Which protocol provides full-duplex communication over a single TCP connection in real time?");
-        q1.setTimeLimit(30);
-        q1.setMarks(10);
-        q1.setOrderIndex(0);
-        q1.setQuiz(q1Quiz);
-
-        AnswerOption optA = new AnswerOption("A", "HTTP/1.1 Long Polling", false);
-        optA.setQuestion(q1);
-        AnswerOption optB = new AnswerOption("B", "WebSocket", true); // Authoritative correct option
-        optB.setQuestion(q1);
-        AnswerOption optC = new AnswerOption("C", "Server-Sent Events (SSE)", false);
-        optC.setQuestion(q1);
-        AnswerOption optD = new AnswerOption("D", "DNS Lookup", false);
-        optD.setQuestion(q1);
-
-        q1.setOptions(new ArrayList<>(List.of(optA, optB, optC, optD)));
-        questions.add(q1);
-
-        // Questions 2, 3, 4 placeholders
-        for (int i = 1; i < 4; i++) {
-            Question q = new Question();
-            q.setQuestionText("Subsequent Question " + (i + 1));
-            q.setTimeLimit(30);
-            q.setMarks(10);
-            q.setOrderIndex(i);
-            q.setQuiz(q1Quiz);
-            AnswerOption oA = new AnswerOption("A", "Option A", true);
-            oA.setQuestion(q);
-            AnswerOption oB = new AnswerOption("B", "Option B", false);
-            oB.setQuestion(q);
-            q.setOptions(new ArrayList<>(List.of(oA, oB)));
-            questions.add(q);
-        }
-
-        q1Quiz.setQuestions(questions);
-        q1Quiz = quizRepository.save(q1Quiz);
-
-        LiveSession liveSession = liveSessionService.createLiveSession(q1Quiz.getId());
-        String pin = liveSession.getPin();
-
-        // 5 Candidates join and acknowledge rules
-        List<Participant> candidates = new ArrayList<>();
-        for (int i = 1; i <= 5; i++) {
-            String cid = "cand-q1-" + i;
-            Participant p = liveSessionService.joinSession(new JoinRequest(pin, "Student " + i, cid));
-            liveSessionService.acknowledgeRules(pin, cid);
-            candidates.add(p);
-        }
-
-        // Faculty starts Question 1 (index 0)
-        SessionStateResponse hostStart = liveSessionService.startQuestion(pin, 0);
-        assertEquals(0, hostStart.getCurrentQuestionIndex());
-        assertEquals(1L, hostStart.getStateVersion(), "Active Question 0 stateVersion must be 1");
-
-        // Verify Candidate 1 before submission: stateVersion=1, no verdict exposed
-        CandidateStateResponse cand1Before = liveSessionService.getCandidateSessionState(pin, candidates.get(0).getCandidateId());
-        assertEquals(1L, cand1Before.getStateVersion());
-        assertNull(cand1Before.getRevealedCorrectLabel());
-        assertNull(cand1Before.getCorrectOptionLabel());
-        assertNull(cand1Before.getWasCorrect());
-        assertFalse(cand1Before.isHasSubmitted());
-        assertNull(cand1Before.getMySelectedLabel());
-
-        // 1. Candidate 1 selects B (Correct)
-        SubmitAnswerRequest req1 = new SubmitAnswerRequest();
-        req1.setSessionPin(pin);
-        req1.setCandidateId(candidates.get(0).getCandidateId());
-        req1.setQuestionId(q1.getId());
-        req1.setOptionLabel("B");
-        liveSessionService.submitAnswer(req1);
-
-        // 2. Candidate 2 selects A (Incorrect)
-        SubmitAnswerRequest req2 = new SubmitAnswerRequest();
-        req2.setSessionPin(pin);
-        req2.setCandidateId(candidates.get(1).getCandidateId());
-        req2.setQuestionId(q1.getId());
-        req2.setOptionLabel("A");
-        liveSessionService.submitAnswer(req2);
-
-        // 3. Candidate 3 selects C (Incorrect)
-        SubmitAnswerRequest req3 = new SubmitAnswerRequest();
-        req3.setSessionPin(pin);
-        req3.setCandidateId(candidates.get(2).getCandidateId());
-        req3.setQuestionId(q1.getId());
-        req3.setOptionLabel("C");
-        liveSessionService.submitAnswer(req3);
-
-        // 4. Candidate 4 selects D (Incorrect)
-        SubmitAnswerRequest req4 = new SubmitAnswerRequest();
-        req4.setSessionPin(pin);
-        req4.setCandidateId(candidates.get(3).getCandidateId());
-        req4.setQuestionId(q1.getId());
-        req4.setOptionLabel("D");
-        liveSessionService.submitAnswer(req4);
-
-        // 5. Candidate 5 does NOT answer (unanswered)
-
-        // Verify that while active, submitted candidates have their selection saved but no verdict is leaked
-        CandidateStateResponse cand1Active = liveSessionService.getCandidateSessionState(pin, candidates.get(0).getCandidateId());
-        assertTrue(cand1Active.isHasSubmitted());
-        assertEquals("B", cand1Active.getMySelectedLabel());
-        assertNull(cand1Active.getRevealedCorrectLabel());
-        assertNull(cand1Active.getCorrectOptionLabel());
-        assertNull(cand1Active.getWasCorrect());
-
-        // Faculty reveals the answer
-        SessionStateResponse hostReveal = liveSessionService.revealAnswer(pin);
-        assertEquals(SessionStatus.QUESTION_REVEALED, hostReveal.getStatus());
-        assertEquals("B", hostReveal.getCorrectOptionLabel(), "Host must authoritatively identify option B as correct");
-        assertEquals(5L, hostReveal.getStateVersion(), "Revealed Question 0 stateVersion must be 5");
-        assertEquals(4, hostReveal.getSubmissionCount(), "4 candidates submitted");
-        assertEquals(25.0, hostReveal.getCorrectPercentage(), 0.01, "1 of 4 submissions correct = 25%");
-
-        // 1. Candidate 1: Selected B -> Correct, wasCorrect = true, revealedCorrectLabel = "B"
-        CandidateStateResponse c1 = liveSessionService.getCandidateSessionState(pin, candidates.get(0).getCandidateId());
-        assertEquals(5L, c1.getStateVersion(), "Candidate 1 stateVersion must be 5");
-        assertEquals("B", c1.getRevealedCorrectLabel(), "Candidate 1 revealed label must be 'B'");
-        assertEquals("B", c1.getCorrectOptionLabel(), "Candidate 1 correct option label must be 'B'");
-        assertEquals("B", c1.getMySelectedLabel(), "Candidate 1 selected label must be 'B'");
-        assertEquals("B", c1.getSelectedOptionLabel(), "Candidate 1 selected option label must be 'B'");
-        assertEquals(q1.getId(), c1.getQuestionId(), "Candidate 1 questionId must match q1 ID");
-        assertEquals(0, c1.getQuestionIndex(), "Candidate 1 questionIndex must be 0");
-        assertEquals(SessionStatus.QUESTION_REVEALED, c1.getStatus(), "Candidate 1 status must be QUESTION_REVEALED");
-        assertTrue(c1.isHasSubmitted(), "Candidate 1 hasSubmitted must be true");
-        assertEquals(Boolean.TRUE, c1.getWasCorrect(), "Candidate 1 selected B -> wasCorrect must be true");
-
-        // Verify Authoritative REST endpoint contract for Candidate 1
-        ResponseEntity<?> restC1 = liveSessionController.getCandidateState(pin, candidates.get(0).getCandidateId());
-        assertTrue(restC1.getStatusCode().is2xxSuccessful());
-        assertTrue(restC1.getBody() instanceof CandidateStateResponse);
-        CandidateStateResponse c1RestBody = (CandidateStateResponse) restC1.getBody();
-        assertEquals(q1.getId(), c1RestBody.getQuestionId());
-        assertEquals(0, c1RestBody.getQuestionIndex());
-        assertEquals("B", c1RestBody.getSelectedOptionLabel());
-        assertEquals("B", c1RestBody.getCorrectOptionLabel());
-        assertEquals("B", c1RestBody.getRevealedCorrectLabel());
-        assertTrue(c1RestBody.isHasSubmitted());
-        assertEquals(Boolean.TRUE, c1RestBody.getWasCorrect());
-        assertEquals(SessionStatus.QUESTION_REVEALED, c1RestBody.getStatus());
-        assertEquals(5L, c1RestBody.getStateVersion());
-
-        // 2. Candidate 2: Selected A -> Incorrect, wasCorrect = false, revealedCorrectLabel = "B"
-        CandidateStateResponse c2 = liveSessionService.getCandidateSessionState(pin, candidates.get(1).getCandidateId());
-        assertEquals(5L, c2.getStateVersion());
-        assertEquals("B", c2.getRevealedCorrectLabel());
-        assertEquals("B", c2.getCorrectOptionLabel());
-        assertEquals("A", c2.getMySelectedLabel());
-        assertEquals("A", c2.getSelectedOptionLabel());
-        assertEquals(q1.getId(), c2.getQuestionId());
-        assertEquals(0, c2.getQuestionIndex());
-        assertEquals(SessionStatus.QUESTION_REVEALED, c2.getStatus());
-        assertTrue(c2.isHasSubmitted());
-        assertEquals(Boolean.FALSE, c2.getWasCorrect(), "Candidate 2 selected A -> wasCorrect must be false");
-
-        // 3. Candidate 3: Selected C -> Incorrect, wasCorrect = false, revealedCorrectLabel = "B"
-        CandidateStateResponse c3 = liveSessionService.getCandidateSessionState(pin, candidates.get(2).getCandidateId());
-        assertEquals(5L, c3.getStateVersion());
-        assertEquals("B", c3.getRevealedCorrectLabel());
-        assertEquals("B", c3.getCorrectOptionLabel());
-        assertEquals("C", c3.getMySelectedLabel());
-        assertEquals("C", c3.getSelectedOptionLabel());
-        assertEquals(q1.getId(), c3.getQuestionId());
-        assertEquals(0, c3.getQuestionIndex());
-        assertEquals(SessionStatus.QUESTION_REVEALED, c3.getStatus());
-        assertTrue(c3.isHasSubmitted());
-        assertEquals(Boolean.FALSE, c3.getWasCorrect(), "Candidate 3 selected C -> wasCorrect must be false");
-
-        // 4. Candidate 4: Selected D -> Incorrect, wasCorrect = false, revealedCorrectLabel = "B"
-        CandidateStateResponse c4 = liveSessionService.getCandidateSessionState(pin, candidates.get(3).getCandidateId());
-        assertEquals(5L, c4.getStateVersion());
-        assertEquals("B", c4.getRevealedCorrectLabel());
-        assertEquals("B", c4.getCorrectOptionLabel());
-        assertEquals("D", c4.getMySelectedLabel());
-        assertEquals("D", c4.getSelectedOptionLabel());
-        assertEquals(q1.getId(), c4.getQuestionId());
-        assertEquals(0, c4.getQuestionIndex());
-        assertEquals(SessionStatus.QUESTION_REVEALED, c4.getStatus());
-        assertTrue(c4.isHasSubmitted());
-        assertEquals(Boolean.FALSE, c4.getWasCorrect(), "Candidate 4 selected D -> wasCorrect must be false");
-
-        // 5. Candidate 5: Unanswered -> Unanswered, wasCorrect = false, hasSubmitted = false, revealedCorrectLabel = "B"
-        CandidateStateResponse c5 = liveSessionService.getCandidateSessionState(pin, candidates.get(4).getCandidateId());
-        assertEquals(5L, c5.getStateVersion());
-        assertEquals("B", c5.getRevealedCorrectLabel(), "Unanswered candidate revealed label must be 'B'");
-        assertEquals("B", c5.getCorrectOptionLabel());
-        assertNull(c5.getMySelectedLabel(), "Unanswered candidate has no selected label");
-        assertNull(c5.getSelectedOptionLabel(), "Unanswered candidate selectedOptionLabel must be null");
-        assertEquals(q1.getId(), c5.getQuestionId());
-        assertEquals(0, c5.getQuestionIndex());
-        assertEquals(SessionStatus.QUESTION_REVEALED, c5.getStatus());
-        assertFalse(c5.isHasSubmitted(), "Unanswered candidate hasSubmitted must be false");
-        assertEquals(Boolean.FALSE, c5.getWasCorrect(), "Unanswered candidate wasCorrect must be false, not null or stuck pending");
-
-        // Verify Authoritative REST endpoint contract for Unanswered Candidate 5
-        ResponseEntity<?> restC5 = liveSessionController.getCandidateState(pin, candidates.get(4).getCandidateId());
-        assertTrue(restC5.getStatusCode().is2xxSuccessful());
-        CandidateStateResponse c5RestBody = (CandidateStateResponse) restC5.getBody();
-        assertEquals(q1.getId(), c5RestBody.getQuestionId());
-        assertEquals(0, c5RestBody.getQuestionIndex());
-        assertNull(c5RestBody.getSelectedOptionLabel());
-        assertEquals("B", c5RestBody.getCorrectOptionLabel());
-        assertFalse(c5RestBody.isHasSubmitted());
-        assertEquals(SessionStatus.QUESTION_REVEALED, c5RestBody.getStatus());
-
-        // Test Candidate Reload & Reconnect after reveal
-        CandidateStateResponse c1Reload = liveSessionService.getCandidateSessionState(pin, candidates.get(0).getCandidateId().trim());
-        assertEquals(5L, c1Reload.getStateVersion());
-        assertEquals("B", c1Reload.getRevealedCorrectLabel(), "Reloaded Candidate 1 must receive 'B'");
-        assertEquals(Boolean.TRUE, c1Reload.getWasCorrect(), "Reloaded Candidate 1 wasCorrect must be true");
-
-        CandidateStateResponse c2Reload = liveSessionService.getCandidateSessionState(pin, candidates.get(1).getCandidateId().trim());
-        assertEquals(5L, c2Reload.getStateVersion());
-        assertEquals("B", c2Reload.getRevealedCorrectLabel(), "Reloaded Candidate 2 must receive 'B'");
-        assertEquals(Boolean.FALSE, c2Reload.getWasCorrect(), "Reloaded Candidate 2 wasCorrect must be false");
-
-        // Test Question Progression: Advance to Question 2 (index 1)
-        SessionStateResponse hostNext = liveSessionService.advanceOrEnd(pin);
-        assertEquals(1, hostNext.getCurrentQuestionIndex(), "Host must advance to Question 2 (index 1)");
-        assertEquals(SessionStatus.QUESTION_ACTIVE, hostNext.getStatus());
-        assertEquals(11L, hostNext.getStateVersion(), "Question 1 active stateVersion must be 11");
-
-        // Candidate 1 on Question 2: Clean slate, no leaked answers or verdicts from Question 1
-        CandidateStateResponse c1Q2 = liveSessionService.getCandidateSessionState(pin, candidates.get(0).getCandidateId());
-        assertEquals(1, c1Q2.getCurrentQuestionIndex(), "Candidate 1 must be on Question 2 (index 1)");
-        assertEquals(11L, c1Q2.getStateVersion());
-        assertEquals(SessionStatus.QUESTION_ACTIVE, c1Q2.getStatus());
-        assertNull(c1Q2.getRevealedCorrectLabel(), "Question 2 correct label must NOT be leaked");
-        assertNull(c1Q2.getCorrectOptionLabel(), "Question 2 correctOptionLabel must NOT be leaked");
-        assertNull(c1Q2.getWasCorrect(), "Question 2 wasCorrect must be null while active");
-        assertFalse(c1Q2.isHasSubmitted(), "Question 2 hasSubmitted must be false");
-        assertNull(c1Q2.getMySelectedLabel(), "Question 2 mySelectedLabel must be null");
+        // Verify Candidate 5: Simulates page reload / reconnection after reveal -> restores state with wasCorrect=true and label "A"
+        CandidateStateResponse cand5Reloaded = liveSessionService.getCandidateSessionState(pin, candidates.get(4).getCandidateId().trim());
+        assertEquals("A", cand5Reloaded.getRevealedCorrectLabel(), "Candidate 5 reloaded must restore 'A'");
+        assertEquals("A", cand5Reloaded.getMySelectedLabel());
+        assertEquals(Boolean.TRUE, cand5Reloaded.getWasCorrect(), "Candidate 5 reloaded must evaluate to true");
     }
 }

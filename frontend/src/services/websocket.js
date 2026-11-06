@@ -41,7 +41,7 @@ function resolveWsBrokerUrl() {
   return base;
 }
 
-export function connectSessionWebSocket(pin, onEvent, onStats, onHostEvent, onReconnect) {
+export function connectSessionWebSocket(pin, onEvent, onStats, onHostEvent, onReconnect, candidateId, onCandidateEvent) {
   const brokerURL = resolveWsBrokerUrl();
   const isNgrok = brokerURL.includes('ngrok');
   let hasConnectedOnce = false;
@@ -98,6 +98,18 @@ export function connectSessionWebSocket(pin, onEvent, onStats, onHostEvent, onRe
           if (onHostEvent) onHostEvent(data);
         } catch (e) {
           console.error('Error parsing host state message:', e);
+        }
+      });
+    }
+
+    // Participant-specific verification event topic
+    if (candidateId && onCandidateEvent) {
+      stompClient.subscribe(`/topic/session/${pin}/candidate/${candidateId}`, (message) => {
+        try {
+          const data = JSON.parse(message.body);
+          if (onCandidateEvent) onCandidateEvent(data);
+        } catch (e) {
+          console.error('Error parsing candidate event message:', e);
         }
       });
     }

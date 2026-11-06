@@ -13,7 +13,8 @@ public class SubmitAnswerRequest {
     @NotNull(message = "Question ID is required")
     private Long questionId;
 
-    @NotBlank(message = "Option label is required")
+    private Long selectedOptionId;
+    private Long optionId;
     private String optionLabel; // "A", "B", "C", "D"
 
     public SubmitAnswerRequest() {}
@@ -22,6 +23,15 @@ public class SubmitAnswerRequest {
         this.sessionPin = sessionPin;
         this.candidateId = candidateId;
         this.questionId = questionId;
+        this.optionLabel = optionLabel;
+    }
+
+    public SubmitAnswerRequest(String sessionPin, String candidateId, Long questionId, Long selectedOptionId, String optionLabel) {
+        this.sessionPin = sessionPin;
+        this.candidateId = candidateId;
+        this.questionId = questionId;
+        this.selectedOptionId = selectedOptionId;
+        this.optionId = selectedOptionId;
         this.optionLabel = optionLabel;
     }
 
@@ -47,6 +57,28 @@ public class SubmitAnswerRequest {
 
     public void setQuestionId(Long questionId) {
         this.questionId = questionId;
+    }
+
+    public Long getSelectedOptionId() {
+        return selectedOptionId != null ? selectedOptionId : optionId;
+    }
+
+    public void setSelectedOptionId(Long selectedOptionId) {
+        this.selectedOptionId = selectedOptionId;
+        if (this.optionId == null) {
+            this.optionId = selectedOptionId;
+        }
+    }
+
+    public Long getOptionId() {
+        return optionId != null ? optionId : selectedOptionId;
+    }
+
+    public void setOptionId(Long optionId) {
+        this.optionId = optionId;
+        if (this.selectedOptionId == null) {
+            this.selectedOptionId = optionId;
+        }
     }
 
     public String getOptionLabel() {

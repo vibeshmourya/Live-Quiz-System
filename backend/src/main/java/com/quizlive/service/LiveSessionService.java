@@ -242,14 +242,29 @@ public class LiveSessionService {
             throw new IllegalStateException("Answer is locked. Reselection is not permitted for this examination.");
         }
 
-        String label = request.getOptionLabel().trim().toUpperCase();
-        AnswerOption selectedOption = currentQuestion.getOptions().stream()
-                .filter(o -> o.getOptionLabel().equalsIgnoreCase(label))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Invalid option label: " + label));
+        AnswerOption selectedOption = null;
+        Long requestedOptionId = request.getSelectedOptionId() != null ? request.getSelectedOptionId() : request.getOptionId();
+        if (requestedOptionId != null) {
+            selectedOption = currentQuestion.getOptions().stream()
+                    .filter(o -> requestedOptionId.equals(o.getId()))
+                    .findFirst()
+                    .orElse(null);
+        }
+        if (selectedOption == null && request.getOptionLabel() != null && !request.getOptionLabel().trim().isEmpty()) {
+            String labelCandidate = request.getOptionLabel().trim().toUpperCase();
+            selectedOption = currentQuestion.getOptions().stream()
+                    .filter(o -> o.getOptionLabel() != null && o.getOptionLabel().trim().equalsIgnoreCase(labelCandidate))
+                    .findFirst()
+                    .orElse(null);
+        }
+        if (selectedOption == null) {
+            throw new IllegalArgumentException("Invalid option specified for current question: ID=" + requestedOptionId + ", label=" + request.getOptionLabel());
+        }
 
+        String label = selectedOption.getOptionLabel().trim().toUpperCase();
         boolean isCorrect = Boolean.TRUE.equals(selectedOption.getIsCorrect());
-        int marks = isCorrect ? currentQuestion.getMarks() : 0;
+        int questionMarks = currentQuestion.getMarks() != null ? currentQuestion.getMarks() : 1;
+        int marks = isCorrect ? questionMarks : 0;
 
         Submission submission;
         String lockKey = (session.getId() + ":" + participant.getId() + ":" + currentQuestion.getId()).intern();
@@ -303,7 +318,44 @@ public class LiveSessionService {
         messagingTemplate.convertAndSend("/topic/session/" + session.getPin() + "/stats",
                 new WsMessage("STATS_UPDATED", statsPayload));
 
+        // Publish participant-specific verification event to candidate
+        Map<String, Object> verifyPayload = new HashMap<>();
+        verifyPayload.put("eventType", "ANSWER_VERIFIED");
+        verifyPayload.put("roomCode", session.getPin());
+        verifyPayload.put("sessionPin", session.getPin());
+        verifyPayload.put("participantId", participant.getId());
+        verifyPayload.put("candidateId", participant.getCandidateId());
+        verifyPayload.put("questionId", currentQuestion.getId());
+        verifyPayload.put("submissionId", submission.getId());
+        verifyPayload.put("selectedOptionId", selectedOption.getId());
+        verifyPayload.put("submittedLabel", label);
+        verifyPayload.put("isCorrect", isCorrect);
+        verifyPayload.put("verified", true);
+        verifyPayload.put("status", "VERIFIED");
+        verifyPayload.put("marksAwarded", marks);
+        verifyPayload.put("message", isCorrect ? "Answer verified successfully" : "Incorrect answer");
+
+        messagingTemplate.convertAndSend("/topic/session/" + session.getPin() + "/candidate/" + participant.getCandidateId(),
+                new WsMessage("ANSWER_VERIFIED", verifyPayload));
+
         return submission;
+    }
+
+    @Transactional
+    public AnswerVerificationResponse submitAndVerifyAnswer(SubmitAnswerRequest request) {
+        Submission submission = submitAnswer(request);
+        AnswerVerificationResponse resp = new AnswerVerificationResponse();
+        resp.setSuccess(true);
+        resp.setVerified(true);
+        resp.setQuestionId(submission.getQuestion().getId());
+        resp.setSelectedOptionId(submission.getSelectedOption() != null ? submission.getSelectedOption().getId() : null);
+        resp.setSubmittedLabel(submission.getSelectedLabel());
+        resp.setIsCorrect(submission.getIsCorrect());
+        resp.setMarksAwarded(submission.getMarksAwarded());
+        resp.setStatus("VERIFIED");
+        resp.setMessage(Boolean.TRUE.equals(submission.getIsCorrect()) ? "Answer verified successfully" : "Incorrect answer");
+        resp.setSubmittedAt(submission.getSubmittedAt());
+        return resp;
     }
 
     @Transactional
@@ -549,9 +601,10 @@ public class LiveSessionService {
                 if (sub.isPresent()) {
                     resp.setHasSubmitted(true);
                     resp.setMySelectedLabel(sub.get().getSelectedLabel());
-                    if (isRevealedOrFinished) {
-                        resp.setWasCorrect(sub.get().getIsCorrect());
+                    if (sub.get().getSelectedOption() != null) {
+                        resp.setMySelectedOptionId(sub.get().getSelectedOption().getId());
                     }
+                    resp.setWasCorrect(sub.get().getIsCorrect());
                 } else {
                     resp.setHasSubmitted(false);
                     if (isRevealedOrFinished) {

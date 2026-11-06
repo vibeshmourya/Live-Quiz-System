@@ -18,6 +18,9 @@ export default function CandidateQuizPage({
   selectedLabelRef.current = selectedLabel;
   const answersMapRef = useRef({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submissionStatus, setSubmissionStatus] = useState('IDLE'); // 'IDLE' | 'SUBMITTING' | 'VERIFIED_CORRECT' | 'VERIFIED_INCORRECT' | 'ERROR'
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const [timerRemaining, setTimerRemaining] = useState(0);
 
   // Mandatory Rules state
@@ -71,8 +74,13 @@ export default function CandidateQuizPage({
 
         // Preserve client-cached answer if incoming data lacks it
         const currentQId = data.currentQuestion?.id || prev?.currentQuestion?.id;
-        const cachedAnswer = currentQId ? answersMapRef.current[currentQId] : null;
-        const mySelected = data.mySelectedLabel || cachedAnswer || selectedLabelRef.current || prev?.mySelectedLabel || null;
+        const cached = currentQId ? answersMapRef.current[currentQId] : null;
+        const cachedLabel = typeof cached === 'object' && cached !== null ? cached.label : cached;
+        const cachedCorrect = typeof cached === 'object' && cached !== null ? cached.isCorrect : null;
+        const cachedOptId = typeof cached === 'object' && cached !== null ? cached.optionId : null;
+
+        const mySelected = data.mySelectedLabel || cachedLabel || selectedLabelRef.current || prev?.mySelectedLabel || null;
+        const mySelectedOptId = data.mySelectedOptionId || cachedOptId || prev?.mySelectedOptionId || null;
 
         // Authoritative correct label resolution:
         // Use incoming label, or preserve already known revealed label
@@ -80,20 +88,27 @@ export default function CandidateQuizPage({
 
         // Authoritative correctness evaluation:
         let resolvedWasCorrect = null;
-        if (data.status === 'QUESTION_REVEALED' || data.status === 'FINISHED') {
-          if (data.wasCorrect !== undefined && data.wasCorrect !== null) {
-            resolvedWasCorrect = Boolean(data.wasCorrect);
-          } else if (resolvedCorrect && mySelected) {
-            resolvedWasCorrect = resolvedCorrect.trim().toUpperCase() === mySelected.trim().toUpperCase();
-          } else if (prev?.wasCorrect !== undefined && prev?.wasCorrect !== null) {
-            resolvedWasCorrect = prev.wasCorrect;
-          }
+        if (data.wasCorrect !== undefined && data.wasCorrect !== null) {
+          resolvedWasCorrect = Boolean(data.wasCorrect);
+        } else if (cachedCorrect !== undefined && cachedCorrect !== null) {
+          resolvedWasCorrect = cachedCorrect;
+        } else if (resolvedCorrect && mySelected) {
+          resolvedWasCorrect = resolvedCorrect.trim().toUpperCase() === mySelected.trim().toUpperCase();
+        } else if (prev?.wasCorrect !== undefined && prev?.wasCorrect !== null) {
+          resolvedWasCorrect = prev.wasCorrect;
+        }
+
+        if (resolvedWasCorrect === true) {
+          setSubmissionStatus('VERIFIED_CORRECT');
+        } else if (resolvedWasCorrect === false) {
+          setSubmissionStatus('VERIFIED_INCORRECT');
         }
 
         return {
           ...prev,
           ...data,
           mySelectedLabel: mySelected,
+          mySelectedOptionId: mySelectedOptId,
           hasSubmitted: Boolean(data.hasSubmitted || mySelected),
           revealedCorrectLabel: resolvedCorrect,
           correctOptionLabel: resolvedCorrect,
@@ -106,7 +121,11 @@ export default function CandidateQuizPage({
       }
       if (data?.hasSubmitted && data?.mySelectedLabel) {
         if (data.currentQuestion?.id) {
-          answersMapRef.current[data.currentQuestion.id] = data.mySelectedLabel;
+          answersMapRef.current[data.currentQuestion.id] = {
+            label: data.mySelectedLabel,
+            isCorrect: data.wasCorrect,
+            optionId: data.mySelectedOptionId,
+          };
         }
         setSelectedLabel(data.mySelectedLabel);
       }
@@ -268,7 +287,18 @@ export default function CandidateQuizPage({
         if (event.type === 'QUESTION_STARTED') {
           const payload = event.payload;
           const qId = payload.question?.id;
-          const previousAnswer = qId ? answersMapRef.current[qId] : null;
+          const cached = qId ? answersMapRef.current[qId] : null;
+          const previousAnswer = typeof cached === 'object' && cached !== null ? cached.label : cached;
+          const previousCorrect = typeof cached === 'object' && cached !== null ? cached.isCorrect : null;
+          const previousOptId = typeof cached === 'object' && cached !== null ? cached.optionId : null;
+
+          if (previousCorrect === true) {
+            setSubmissionStatus('VERIFIED_CORRECT');
+          } else if (previousCorrect === false) {
+            setSubmissionStatus('VERIFIED_INCORRECT');
+          } else {
+            setSubmissionStatus('IDLE');
+          }
 
           setState((prev) => {
             if (!prev) return prev;
@@ -291,8 +321,9 @@ export default function CandidateQuizPage({
               warningThreshold: payload.warningThreshold !== undefined ? payload.warningThreshold : prev.warningThreshold,
               hasSubmitted: Boolean(previousAnswer),
               mySelectedLabel: previousAnswer || null,
+              mySelectedOptionId: previousOptId || null,
               revealedCorrectLabel: null,
-              wasCorrect: null,
+              wasCorrect: previousCorrect,
             };
           });
           setSelectedLabel(previousAnswer || null);
@@ -304,18 +335,28 @@ export default function CandidateQuizPage({
               return prev; // guard against stale older question reveal
             }
             const currentQId = prev.currentQuestion?.id;
-            const activeChoice = (selectedLabelRef.current || prev.mySelectedLabel || (currentQId ? answersMapRef.current[currentQId] : null) || '').trim().toUpperCase();
+            const cached = currentQId ? answersMapRef.current[currentQId] : null;
+            const cachedLabel = typeof cached === 'object' && cached !== null ? cached.label : cached;
+            const cachedCorrect = typeof cached === 'object' && cached !== null ? cached.isCorrect : null;
+
+            const activeChoice = (selectedLabelRef.current || prev.mySelectedLabel || cachedLabel || '').trim().toUpperCase();
             const revealedCorrect = (payload.correctOptionLabel || payload.revealedCorrectLabel || payload.correctAnswer || prev.revealedCorrectLabel || prev.correctOptionLabel || '').trim().toUpperCase();
 
             let isCorrect = null;
             if (payload.wasCorrect !== undefined && payload.wasCorrect !== null) {
               isCorrect = Boolean(payload.wasCorrect);
-            } else if (activeChoice && revealedCorrect) {
-              isCorrect = activeChoice === revealedCorrect;
             } else if (prev.wasCorrect !== undefined && prev.wasCorrect !== null) {
               isCorrect = prev.wasCorrect;
-            } else {
-              isCorrect = false;
+            } else if (cachedCorrect !== undefined && cachedCorrect !== null) {
+              isCorrect = cachedCorrect;
+            } else if (activeChoice && revealedCorrect) {
+              isCorrect = activeChoice === revealedCorrect;
+            }
+
+            if (isCorrect === true) {
+              setSubmissionStatus('VERIFIED_CORRECT');
+            } else if (isCorrect === false) {
+              setSubmissionStatus('VERIFIED_INCORRECT');
             }
 
             return {
@@ -347,13 +388,37 @@ export default function CandidateQuizPage({
       // onReconnect: sync state when connection is restored
       () => {
         loadCandidateState();
+      },
+      candidateId,
+      (candEvent) => {
+        if (candEvent.type === 'ANSWER_VERIFIED') {
+          const p = candEvent.payload || {};
+          const currentQId = stateRef.current?.currentQuestion?.id;
+          if (p.questionId && currentQId && p.questionId === currentQId) {
+            const isCorrect = Boolean(p.isCorrect);
+            setSubmissionStatus(isCorrect ? 'VERIFIED_CORRECT' : 'VERIFIED_INCORRECT');
+            if (p.submittedLabel) setSelectedLabel(p.submittedLabel);
+            answersMapRef.current[p.questionId] = {
+              label: p.submittedLabel,
+              isCorrect: isCorrect,
+              optionId: p.selectedOptionId,
+            };
+            setState((prev) => ({
+              ...prev,
+              hasSubmitted: true,
+              mySelectedLabel: p.submittedLabel || prev.mySelectedLabel,
+              mySelectedOptionId: p.selectedOptionId || prev.mySelectedOptionId,
+              wasCorrect: isCorrect,
+            }));
+          }
+        }
       }
     );
 
     return () => {
       unsubscribe();
     };
-  }, [pin]);
+  }, [pin, candidateId]);
 
   // Synchronized countdown timer
   useEffect(() => {
@@ -372,8 +437,8 @@ export default function CandidateQuizPage({
     return () => clearInterval(interval);
   }, [state?.questionEndsAtEpochMs, state?.status]);
 
-  async function handleOptionSelect(label) {
-    if (state?.status !== 'QUESTION_ACTIVE' || timerRemaining <= 0) {
+  async function handleOptionSelect(label, optId) {
+    if (state?.status !== 'QUESTION_ACTIVE' || timerRemaining <= 0 || isSubmitting) {
       return;
     }
 
@@ -389,30 +454,50 @@ export default function CandidateQuizPage({
     }
 
     const prevLabel = selectedLabel;
+    const prevStatus = submissionStatus;
     setSelectedLabel(label);
     setIsSubmitting(true);
+    setSubmissionStatus('SUBMITTING');
     setError('');
 
     try {
-      await submitAnswer({
+      const res = await submitAnswer({
         sessionPin: pin,
         candidateId,
         questionId: state.currentQuestion.id,
+        selectedOptionId: optId,
         optionLabel: label,
       });
 
+      const isCorrect = res && res.verified ? Boolean(res.isCorrect) : null;
+      const canonicalOptId = (res && res.selectedOptionId) || optId;
+      const submittedLbl = (res && res.submittedLabel) || label;
+
       if (state.currentQuestion?.id) {
-        answersMapRef.current[state.currentQuestion.id] = label;
+        answersMapRef.current[state.currentQuestion.id] = {
+          label: submittedLbl,
+          isCorrect: isCorrect,
+          optionId: canonicalOptId,
+        };
+      }
+
+      if (isCorrect !== null) {
+        setSubmissionStatus(isCorrect ? 'VERIFIED_CORRECT' : 'VERIFIED_INCORRECT');
+      } else {
+        setSubmissionStatus('IDLE');
       }
 
       setState((prev) => ({
         ...prev,
         hasSubmitted: true,
-        mySelectedLabel: label,
+        mySelectedLabel: submittedLbl,
+        mySelectedOptionId: canonicalOptId,
+        wasCorrect: isCorrect,
       }));
     } catch (err) {
-      setError(err.message || 'Submission error');
+      setError(err.message || 'Unable to submit answer. Please try again.');
       setSelectedLabel(prevLabel);
+      setSubmissionStatus(prevStatus === 'SUBMITTING' ? 'ERROR' : prevStatus);
     } finally {
       setIsSubmitting(false);
     }
@@ -621,8 +706,11 @@ export default function CandidateQuizPage({
   const isRevealed = state.status === 'QUESTION_REVEALED';
   const allowReselect = Boolean(state.allowReselection);
   const displayCorrectLabel = (state.revealedCorrectLabel || state.correctOptionLabel || '').trim().toUpperCase();
-  const candidateChoice = (selectedLabel || state.mySelectedLabel || (currentQ?.id ? answersMapRef.current[currentQ.id] : null) || '').trim().toUpperCase() || null;
-  const isStudentCorrect = state.wasCorrect === true || Boolean(candidateChoice && displayCorrectLabel && candidateChoice === displayCorrectLabel);
+  const cachedForCurrentQ = currentQ?.id ? answersMapRef.current[currentQ.id] : null;
+  const cachedChoiceLabel = typeof cachedForCurrentQ === 'object' && cachedForCurrentQ !== null ? cachedForCurrentQ.label : cachedForCurrentQ;
+  const candidateChoice = (selectedLabel || state.mySelectedLabel || cachedChoiceLabel || '').trim().toUpperCase() || null;
+  const isStudentCorrect = state.wasCorrect === true || (Boolean(candidateChoice && displayCorrectLabel) && candidateChoice === displayCorrectLabel);
+  const isStudentIncorrect = state.wasCorrect === false || (Boolean(candidateChoice && displayCorrectLabel) && candidateChoice !== displayCorrectLabel);
   const hasSubmitted = state.hasSubmitted || !!selectedLabel || !!candidateChoice;
   const isLocked = hasSubmitted && !allowReselect;
   const isTimeUp = timerRemaining <= 0;
@@ -720,9 +808,9 @@ export default function CandidateQuizPage({
             const isSelected = candidateChoice === optLabel;
             const isCorrectOption = isRevealed && (
               (displayCorrectLabel && optLabel === displayCorrectLabel) ||
-              (isStudentCorrect && isSelected)
+              (isSelected && isStudentCorrect)
             );
-            const isWrongSelection = isRevealed && isSelected && !isCorrectOption && !isStudentCorrect;
+            const isWrongSelection = isRevealed && isSelected && isStudentIncorrect && !isCorrectOption;
 
             let buttonStyle = 'bg-white border-slate-200 text-slate-800 active:scale-[0.99]';
 
@@ -744,11 +832,11 @@ export default function CandidateQuizPage({
 
             return (
               <button
-                key={opt.optionLabel}
+                key={opt.id || opt.optionLabel}
                 id={`candidate-opt-${opt.optionLabel}`}
                 type="button"
                 disabled={isLocked || isTimeUp || isRevealed || isSubmitting}
-                onClick={() => handleOptionSelect(opt.optionLabel)}
+                onClick={() => handleOptionSelect(opt.optionLabel, opt.id)}
                 className={`w-full min-h-[58px] p-4 rounded-xl border flex items-center gap-3 text-left transition-all ${buttonStyle}`}
               >
                 <span
@@ -776,20 +864,29 @@ export default function CandidateQuizPage({
             className={`p-4 rounded-xl text-center text-sm font-semibold border ${
               isStudentCorrect
                 ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                : candidateChoice
+                : isStudentIncorrect
                 ? 'bg-red-50 border-red-200 text-red-800'
                 : 'bg-slate-100 border-slate-200 text-slate-700'
             }`}
           >
             {isStudentCorrect
               ? '✓ Correct! Well done.'
+              : isStudentIncorrect
+              ? candidateChoice
+                ? (displayCorrectLabel
+                    ? `✕ Incorrect. The correct answer was ${displayCorrectLabel}.`
+                    : `✕ Incorrect answer.`)
+                : (displayCorrectLabel
+                    ? `Time up! The correct answer was ${displayCorrectLabel}.`
+                    : `Time up! No answer submitted.`)
               : candidateChoice
-              ? (displayCorrectLabel
-                  ? `✕ Incorrect. The correct answer was ${displayCorrectLabel}.`
-                  : `✕ Incorrect. Verification in progress...`)
-              : (displayCorrectLabel
-                  ? `Time up! The correct answer was ${displayCorrectLabel}.`
-                  : `Time up! Verification in progress...`)}
+              ? `✓ Answer recorded (${candidateChoice}). Awaiting official reveal...`
+              : `Time up! Awaiting question review...`}
+          </div>
+        ) : isSubmitting || submissionStatus === 'SUBMITTING' ? (
+          <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl text-center text-xs font-medium text-indigo-900 shadow-xs flex items-center justify-center gap-2">
+            <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-indigo-600 border-t-transparent rounded-full"></span>
+            <span>Verifying and recording your answer...</span>
           </div>
         ) : hasSubmitted ? (
           <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl text-center text-xs font-medium text-indigo-900 shadow-xs">

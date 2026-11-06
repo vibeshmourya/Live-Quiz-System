@@ -490,13 +490,24 @@ export async function startQuestion(pin, questionIndex = 0) {
   return res.json();
 }
 
-export async function submitAnswer({ sessionPin, candidateId, questionId, optionLabel }) {
+export async function submitAnswer({ sessionPin, candidateId, questionId, selectedOptionId, optionId, optionLabel }) {
   let res;
   try {
+    const payload = {
+      sessionPin,
+      candidateId,
+      questionId,
+      optionLabel,
+    };
+    const canonicalOptId = selectedOptionId !== undefined ? selectedOptionId : optionId;
+    if (canonicalOptId !== undefined && canonicalOptId !== null) {
+      payload.selectedOptionId = canonicalOptId;
+      payload.optionId = canonicalOptId;
+    }
     res = await fetch(`${API_BASE}/sessions/${sessionPin}/submit`, {
       method: 'POST',
       headers: getCandidateHeaders(),
-      body: JSON.stringify({ sessionPin, candidateId, questionId, optionLabel }),
+      body: JSON.stringify(payload),
     });
   } catch (err) {
     throw handleNetworkError(err, 'submitting answer');

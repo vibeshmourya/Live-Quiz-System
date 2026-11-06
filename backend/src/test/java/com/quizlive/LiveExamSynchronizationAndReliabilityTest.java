@@ -657,4 +657,230 @@ public class LiveExamSynchronizationAndReliabilityTest {
         assertEquals("A", cand5Reloaded.getMySelectedLabel());
         assertEquals(Boolean.TRUE, cand5Reloaded.getWasCorrect(), "Candidate 5 reloaded must evaluate to true");
     }
+
+    @Test
+    @DisplayName("11. Master Verification Pipeline: Canonical Option ID, REST verification verdict, and all positions A, B, C, D")
+    void testMasterVerificationPipelineAcrossAllPositions() {
+        // Setup custom quiz with positions A, B, C, D as correct across 4 questions
+        Quiz pQuiz = new Quiz("Master Protocol Examination");
+        pQuiz.setFacultyUsername("prof_networks");
+        pQuiz.setExamStatus(ExamStatus.SCHEDULED);
+        pQuiz.setAnswerChangePolicy(AnswerChangePolicy.ALLOW_RESELECTION);
+        pQuiz.setRequireFullscreen(true);
+        pQuiz.setShowCorrectAnswers(true);
+
+        List<Question> qList = new ArrayList<>();
+        // Q0: Correct answer is A
+        Question qA = new Question();
+        qA.setQuestionText("Which layer is responsible for routing in OSI?");
+        qA.setTimeLimit(60);
+        qA.setMarks(5);
+        qA.setOrderIndex(0);
+        qA.setQuiz(pQuiz);
+        AnswerOption qA_A = new AnswerOption("A", "Network Layer", true);
+        qA_A.setQuestion(qA);
+        AnswerOption qA_B = new AnswerOption("B", "Session Layer", false);
+        qA_B.setQuestion(qA);
+        qA.setOptions(new ArrayList<>(List.of(qA_A, qA_B)));
+        qList.add(qA);
+
+        // Q1: Correct answer is B (The WebSocket Prompt Example!)
+        Question qB = new Question();
+        qB.setQuestionText("Which protocol provides full-duplex communication over a single TCP connection in real time?");
+        qB.setTimeLimit(60);
+        qB.setMarks(5);
+        qB.setOrderIndex(1);
+        qB.setQuiz(pQuiz);
+        AnswerOption qB_A = new AnswerOption("A", "HTTP/1.1 Long Polling", false);
+        qB_A.setQuestion(qB);
+        AnswerOption qB_B = new AnswerOption("B", "WebSocket", true);
+        qB_B.setQuestion(qB);
+        AnswerOption qB_C = new AnswerOption("C", "Server-Sent Events (SSE)", false);
+        qB_C.setQuestion(qB);
+        AnswerOption qB_D = new AnswerOption("D", "DNS Lookup", false);
+        qB_D.setQuestion(qB);
+        qB.setOptions(new ArrayList<>(List.of(qB_A, qB_B, qB_C, qB_D)));
+        qList.add(qB);
+
+        // Q2: Correct answer is C
+        Question qC = new Question();
+        qC.setQuestionText("Which transport protocol guarantees ordered, reliable byte stream delivery?");
+        qC.setTimeLimit(60);
+        qC.setMarks(5);
+        qC.setOrderIndex(2);
+        qC.setQuiz(pQuiz);
+        AnswerOption qC_A = new AnswerOption("A", "UDP", false);
+        qC_A.setQuestion(qC);
+        AnswerOption qC_B = new AnswerOption("B", "ICMP", false);
+        qC_B.setQuestion(qC);
+        AnswerOption qC_C = new AnswerOption("C", "TCP", true);
+        qC_C.setQuestion(qC);
+        AnswerOption qC_D = new AnswerOption("D", "ARP", false);
+        qC_D.setQuestion(qC);
+        qC.setOptions(new ArrayList<>(List.of(qC_A, qC_B, qC_C, qC_D)));
+        qList.add(qC);
+
+        // Q3: Correct answer is D
+        Question qD = new Question();
+        qD.setQuestionText("What port does HTTPS operate on by default?");
+        qD.setTimeLimit(60);
+        qD.setMarks(5);
+        qD.setOrderIndex(3);
+        qD.setQuiz(pQuiz);
+        AnswerOption qD_A = new AnswerOption("A", "21", false);
+        qD_A.setQuestion(qD);
+        AnswerOption qD_B = new AnswerOption("B", "25", false);
+        qD_B.setQuestion(qD);
+        AnswerOption qD_C = new AnswerOption("C", "80", false);
+        qD_C.setQuestion(qD);
+        AnswerOption qD_D = new AnswerOption("D", "443", true);
+        qD_D.setQuestion(qD);
+        qD.setOptions(new ArrayList<>(List.of(qD_A, qD_B, qD_C, qD_D)));
+        qList.add(qD);
+
+        pQuiz.setQuestions(qList);
+        pQuiz = quizRepository.save(pQuiz);
+
+        LiveSession liveSess = liveSessionService.createLiveSession(pQuiz.getId());
+        String pin = liveSess.getPin();
+
+        // 3 candidates join and acknowledge rules
+        Participant p1 = liveSessionService.joinSession(new JoinRequest(pin, "Alice", "cand-alice-101"));
+        liveSessionService.acknowledgeRules(pin, p1.getCandidateId());
+
+        Participant p2 = liveSessionService.joinSession(new JoinRequest(pin, "Bob", "cand-bob-102"));
+        liveSessionService.acknowledgeRules(pin, p2.getCandidateId());
+
+        Participant p3 = liveSessionService.joinSession(new JoinRequest(pin, "Charlie", "cand-charlie-103"));
+        liveSessionService.acknowledgeRules(pin, p3.getCandidateId());
+
+        // --- TEST QUESTION 1: Correct Answer is B (WebSocket) ---
+        liveSessionService.startQuestion(pin, 1);
+        Question activeQ1 = pQuiz.getQuestions().get(1);
+        AnswerOption optB_WebSocket = activeQ1.getOptions().stream().filter(o -> "B".equals(o.getOptionLabel())).findFirst().get();
+        AnswerOption optA_LongPolling = activeQ1.getOptions().stream().filter(o -> "A".equals(o.getOptionLabel())).findFirst().get();
+
+        // Alice selects Option B (WebSocket) using canonical selectedOptionId
+        SubmitAnswerRequest reqAlice = new SubmitAnswerRequest();
+        reqAlice.setSessionPin(pin);
+        reqAlice.setCandidateId(p1.getCandidateId());
+        reqAlice.setQuestionId(activeQ1.getId());
+        reqAlice.setSelectedOptionId(optB_WebSocket.getId());
+
+        AnswerVerificationResponse respAlice = liveSessionService.submitAndVerifyAnswer(reqAlice);
+        assertTrue(respAlice.isSuccess(), "Submission should be successful");
+        assertTrue(respAlice.isVerified(), "Submission should be verified");
+        assertEquals(Boolean.TRUE, respAlice.getIsCorrect(), "Alice chose B (WebSocket) -> isCorrect MUST be true");
+        assertEquals(optB_WebSocket.getId(), respAlice.getSelectedOptionId(), "Canonical optionId must match B");
+        assertEquals("B", respAlice.getSubmittedLabel(), "Submitted label must be B");
+        assertEquals(5, respAlice.getMarksAwarded(), "5 marks awarded for correct answer");
+        assertEquals("VERIFIED", respAlice.getStatus());
+
+        // Bob selects Option A (Long Polling) using canonical selectedOptionId
+        SubmitAnswerRequest reqBob = new SubmitAnswerRequest();
+        reqBob.setSessionPin(pin);
+        reqBob.setCandidateId(p2.getCandidateId());
+        reqBob.setQuestionId(activeQ1.getId());
+        reqBob.setSelectedOptionId(optA_LongPolling.getId());
+
+        AnswerVerificationResponse respBob = liveSessionService.submitAndVerifyAnswer(reqBob);
+        assertTrue(respBob.isSuccess());
+        assertTrue(respBob.isVerified());
+        assertEquals(Boolean.FALSE, respBob.getIsCorrect(), "Bob chose A -> isCorrect MUST be false");
+        assertEquals(optA_LongPolling.getId(), respBob.getSelectedOptionId());
+        assertEquals("A", respBob.getSubmittedLabel());
+        assertEquals(0, respBob.getMarksAwarded());
+
+        // Charlie selects Option C using optionLabel
+        SubmitAnswerRequest reqCharlie = new SubmitAnswerRequest();
+        reqCharlie.setSessionPin(pin);
+        reqCharlie.setCandidateId(p3.getCandidateId());
+        reqCharlie.setQuestionId(activeQ1.getId());
+        reqCharlie.setOptionLabel("C");
+
+        AnswerVerificationResponse respCharlie = liveSessionService.submitAndVerifyAnswer(reqCharlie);
+        assertTrue(respCharlie.isSuccess());
+        assertTrue(respCharlie.isVerified());
+        assertEquals(Boolean.FALSE, respCharlie.getIsCorrect(), "Charlie chose C -> isCorrect MUST be false");
+        assertEquals("C", respCharlie.getSubmittedLabel());
+
+        // Inspect Candidate State before reveal: Alice has wasCorrect=true, but revealedCorrectLabel is NOT exposed
+        CandidateStateResponse aliceActiveState = liveSessionService.getCandidateSessionState(pin, p1.getCandidateId());
+        assertEquals("B", aliceActiveState.getMySelectedLabel());
+        assertEquals(optB_WebSocket.getId(), aliceActiveState.getMySelectedOptionId());
+        assertEquals(Boolean.TRUE, aliceActiveState.getWasCorrect(), "Alice verified state must reflect true");
+        assertNull(aliceActiveState.getRevealedCorrectLabel(), "Correct label must not be exposed before reveal");
+
+        // Reveal Question 1: Host correctly shows B
+        SessionStateResponse hostReveal1 = liveSessionService.revealAnswer(pin);
+        assertEquals("B", hostReveal1.getCorrectOptionLabel(), "Authoritative correct option is B");
+        assertEquals(3, hostReveal1.getSubmissionCount(), "3 submissions");
+        assertEquals(33.3, hostReveal1.getCorrectPercentage(), 0.05, "1 of 3 correct = 33.3%");
+
+        // Now Candidate 1 (Alice) state has both wasCorrect=true and revealedCorrectLabel="B"
+        CandidateStateResponse aliceRevealedState = liveSessionService.getCandidateSessionState(pin, p1.getCandidateId());
+        assertEquals("B", aliceRevealedState.getRevealedCorrectLabel());
+        assertEquals(Boolean.TRUE, aliceRevealedState.getWasCorrect());
+        assertEquals("B", aliceRevealedState.getMySelectedLabel());
+
+        // --- TEST QUESTION 2: Correct Answer is C (TCP) ---
+        liveSessionService.startQuestion(pin, 2);
+        Question activeQ2 = pQuiz.getQuestions().get(2);
+        AnswerOption optC_TCP = activeQ2.getOptions().stream().filter(o -> "C".equals(o.getOptionLabel())).findFirst().get();
+
+        SubmitAnswerRequest reqAliceQ2 = new SubmitAnswerRequest();
+        reqAliceQ2.setSessionPin(pin);
+        reqAliceQ2.setCandidateId(p1.getCandidateId());
+        reqAliceQ2.setQuestionId(activeQ2.getId());
+        reqAliceQ2.setSelectedOptionId(optC_TCP.getId());
+
+        AnswerVerificationResponse respAliceQ2 = liveSessionService.submitAndVerifyAnswer(reqAliceQ2);
+        assertEquals(Boolean.TRUE, respAliceQ2.getIsCorrect(), "Alice chose C (TCP) -> isCorrect must be true");
+        assertEquals("C", respAliceQ2.getSubmittedLabel());
+
+        SessionStateResponse hostReveal2 = liveSessionService.revealAnswer(pin);
+        assertEquals("C", hostReveal2.getCorrectOptionLabel(), "Authoritative correct option for Q2 is C");
+
+        // --- TEST QUESTION 3: Correct Answer is D (Port 443) ---
+        liveSessionService.startQuestion(pin, 3);
+        Question activeQ3 = pQuiz.getQuestions().get(3);
+        AnswerOption optD_443 = activeQ3.getOptions().stream().filter(o -> "D".equals(o.getOptionLabel())).findFirst().get();
+
+        SubmitAnswerRequest reqAliceQ3 = new SubmitAnswerRequest();
+        reqAliceQ3.setSessionPin(pin);
+        reqAliceQ3.setCandidateId(p1.getCandidateId());
+        reqAliceQ3.setQuestionId(activeQ3.getId());
+        reqAliceQ3.setSelectedOptionId(optD_443.getId());
+
+        AnswerVerificationResponse respAliceQ3 = liveSessionService.submitAndVerifyAnswer(reqAliceQ3);
+        assertEquals(Boolean.TRUE, respAliceQ3.getIsCorrect(), "Alice chose D (443) -> isCorrect must be true");
+        assertEquals("D", respAliceQ3.getSubmittedLabel());
+
+        SessionStateResponse hostReveal3 = liveSessionService.revealAnswer(pin);
+        assertEquals("D", hostReveal3.getCorrectOptionLabel(), "Authoritative correct option for Q3 is D");
+
+        // --- TEST RESELECTION on Question 3: Alice changes answer from D to A, then back to D ---
+        liveSessionService.startQuestion(pin, 3);
+        AnswerOption optA_21 = activeQ3.getOptions().stream().filter(o -> "A".equals(o.getOptionLabel())).findFirst().get();
+        SubmitAnswerRequest reselectA = new SubmitAnswerRequest();
+        reselectA.setSessionPin(pin);
+        reselectA.setCandidateId(p1.getCandidateId());
+        reselectA.setQuestionId(activeQ3.getId());
+        reselectA.setSelectedOptionId(optA_21.getId());
+
+        AnswerVerificationResponse respReselectA = liveSessionService.submitAndVerifyAnswer(reselectA);
+        assertEquals(Boolean.FALSE, respReselectA.getIsCorrect(), "Alice changed to A -> now incorrect");
+        assertEquals("A", respReselectA.getSubmittedLabel());
+
+        // Alice changes back to D
+        SubmitAnswerRequest reselectD = new SubmitAnswerRequest();
+        reselectD.setSessionPin(pin);
+        reselectD.setCandidateId(p1.getCandidateId());
+        reselectD.setQuestionId(activeQ3.getId());
+        reselectD.setSelectedOptionId(optD_443.getId());
+
+        AnswerVerificationResponse respReselectD = liveSessionService.submitAndVerifyAnswer(reselectD);
+        assertEquals(Boolean.TRUE, respReselectD.getIsCorrect(), "Alice changed back to D -> now correct");
+        assertEquals("D", respReselectD.getSubmittedLabel());
+    }
 }

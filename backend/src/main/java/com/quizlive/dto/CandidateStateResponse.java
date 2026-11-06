@@ -17,6 +17,7 @@ public class CandidateStateResponse {
     private boolean hasSubmitted;
     private boolean allowReselection;
     private String mySelectedLabel;
+    private Long mySelectedOptionId;
     private String revealedCorrectLabel; // Only non-null if revealed or finished
     private String correctOptionLabel;  // Alias for revealedCorrectLabel
     private Boolean wasCorrect;           // Only non-null if revealed or finished
@@ -148,6 +149,14 @@ public class CandidateStateResponse {
 
     public void setMySelectedLabel(String mySelectedLabel) {
         this.mySelectedLabel = mySelectedLabel;
+    }
+
+    public Long getMySelectedOptionId() {
+        return mySelectedOptionId;
+    }
+
+    public void setMySelectedOptionId(Long mySelectedOptionId) {
+        this.mySelectedOptionId = mySelectedOptionId;
     }
 
     public String getRevealedCorrectLabel() {

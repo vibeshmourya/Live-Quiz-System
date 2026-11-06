@@ -145,18 +145,59 @@ public class LiveSessionController {
     @PostMapping("/{pin}/submit")
     public ResponseEntity<?> submitAnswer(
             @PathVariable String pin,
-            @Valid @RequestBody SubmitAnswerRequest request
+            @RequestBody SubmitAnswerRequest request
     ) {
         try {
             request.setSessionPin(pin);
-            Submission submission = liveSessionService.submitAnswer(request);
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "submittedLabel", submission.getSelectedLabel(),
-                    "submittedAt", submission.getSubmittedAt()
+            if (request.getCandidateId() == null || request.getCandidateId().trim().isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "verified", false,
+                        "errorCode", "INVALID_CANDIDATE",
+                        "message", "Candidate ID is required"
+                ));
+            }
+            if (request.getQuestionId() == null) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "verified", false,
+                        "errorCode", "INVALID_QUESTION",
+                        "message", "Question ID is required"
+                ));
+            }
+            if ((request.getSelectedOptionId() == null && request.getOptionId() == null)
+                    && (request.getOptionLabel() == null || request.getOptionLabel().trim().isEmpty())) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "verified", false,
+                        "errorCode", "INVALID_OPTION",
+                        "message", "Option ID or Option label is required"
+                ));
+            }
+
+            AnswerVerificationResponse response = liveSessionService.submitAndVerifyAnswer(request);
+            return ResponseEntity.ok(response);
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                    "success", false,
+                    "verified", false,
+                    "errorCode", "SUBMISSION_REJECTED",
+                    "message", e.getMessage()
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "verified", false,
+                    "errorCode", "BAD_REQUEST",
+                    "message", e.getMessage()
             ));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of(
+                    "success", false,
+                    "verified", false,
+                    "errorCode", "ANSWER_VERIFICATION_FAILED",
+                    "message", "Unable to verify your answer. Please try again."
+            ));
         }
     }
 
